@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """ Tool to preview swaps and tweak configuration prior to running a convert """
 
+import gettext
 import logging
 import random
 import tkinter as tk
@@ -31,6 +32,10 @@ from plugins.plugin_loader import PluginLoader
 from plugins.convert._config import Config
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
+
+# LOCALES
+_LANG = gettext.translation("tools.preview", localedir="locales", fallback=True)
+_ = _LANG.gettext
 
 
 class Preview(tk.Tk):  # pylint:disable=too-few-public-methods
@@ -123,15 +128,12 @@ class Preview(tk.Tk):  # pylint:disable=too-few-public-methods
 
     def _build_ui(self):
         """ Build the elements for displaying preview images and options panels. """
-        container = tk.PanedWindow(self,
-                                   sashrelief=tk.RIDGE,
-                                   sashwidth=4,
-                                   sashpad=8,
-                                   orient=tk.VERTICAL)
+        container = ttk.PanedWindow(self,
+                                    orient=tk.VERTICAL)
         container.pack(fill=tk.BOTH, expand=True)
         container.preview_display = self._display
         self._image_canvas = ImagesCanvas(container, self._tk_vars)
-        container.add(self._image_canvas, height=400 * get_config().scaling_factor)
+        container.add(self._image_canvas, weight=3)
 
         options_frame = ttk.Frame(container)
         self._cli_frame = ActionFrame(
@@ -147,7 +149,9 @@ class Preview(tk.Tk):  # pylint:disable=too-few-public-methods
         self._opts_book = OptionsBook(options_frame,
                                       self._config_tools,
                                       self._refresh)
-        container.add(options_frame)
+        container.add(options_frame, weight=1)
+        self.update_idletasks()
+        container.sashpos(0, int(400 * get_config().scaling_factor))
 
 
 class Samples():
@@ -1148,7 +1152,7 @@ class ActionFrame(ttk.Frame):  # pylint: disable=too-many-ancestors
             Whether the model was trained with a mask
         """
         cp_options = self._get_control_panel_options(defaults, available_masks, has_predicted_mask)
-        panel_kwargs = dict(blank_nones=False, label_width=10)
+        panel_kwargs = dict(blank_nones=False, label_width=10, style="CPanel")
         ControlPanel(parent, cp_options, header_text=None, **panel_kwargs)
 
     def _get_control_panel_options(self, defaults, available_masks, has_predicted_mask):
@@ -1178,6 +1182,7 @@ class ActionFrame(ttk.Frame):  # pylint: disable=too-many-ancestors
                                            default=defaults[opt],
                                            initial_value=defaults[opt],
                                            choices=choices,
+                                           group="Command Line Choices",
                                            is_radio=False)
             self._tk_vars[opt] = cp_option.tk_var
             cp_options.append(cp_option)
@@ -1297,20 +1302,20 @@ class ActionFrame(ttk.Frame):  # pylint: disable=too-many-ancestors
             logger.debug("Adding button: '%s'", utl)
             img = get_images().icons[utl]
             if utl == "save":
-                text = "Save full config"
+                text = _("Save full config")
                 action = self._config_tools.save_config
             elif utl == "clear":
-                text = "Reset full config to default values"
+                text = _("Reset full config to default values")
                 action = self._config_tools.reset_config_to_default
             elif utl == "reload":
-                text = "Reset full config to saved values"
+                text = _("Reset full config to saved values")
                 action = self._config_tools.reset_config_to_saved
 
             btnutl = ttk.Button(frame,
                                 image=img,
                                 command=action)
             btnutl.pack(padx=2, side=tk.RIGHT)
-            Tooltip(btnutl, text=text, wraplength=200)
+            Tooltip(btnutl, text=text, wrap_length=200)
         logger.debug("Added util buttons")
 
 
@@ -1413,7 +1418,7 @@ class ConfigFrame(ttk.Frame):  # pylint: disable=too-many-ancestors
             The section/plugin key for these configuration options
         """
         logger.debug("Add Config Frame")
-        panel_kwargs = dict(columns=2, option_columns=2, blank_nones=False)
+        panel_kwargs = dict(columns=2, option_columns=2, blank_nones=False, style="CPanel")
         frame = ttk.Frame(self)
         frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
         cp_options = [opt for key, opt in self._options.items() if key != "helptext"]
@@ -1447,18 +1452,18 @@ class ConfigFrame(ttk.Frame):  # pylint: disable=too-many-ancestors
             logger.debug("Adding button: '%s'", utl)
             img = get_images().icons[utl]
             if utl == "save":
-                text = "Save {} config".format(title)
+                text = _("Save {} config").format(title)
                 action = parent.config_tools.save_config
             elif utl == "clear":
-                text = "Reset {} config to default values".format(title)
+                text = _("Reset {} config to default values").format(title)
                 action = parent.config_tools.reset_config_to_default
             elif utl == "reload":
-                text = "Reset {} config to saved values".format(title)
+                text = _("Reset {} config to saved values").format(title)
                 action = parent.config_tools.reset_config_to_saved
 
             btnutl = ttk.Button(btn_frame,
                                 image=img,
                                 command=lambda cmd=action: cmd(config_key))
             btnutl.pack(padx=2, side=tk.RIGHT)
-            Tooltip(btnutl, text=text, wraplength=200)
+            Tooltip(btnutl, text=text, wrap_length=200)
         logger.debug("Added util buttons")

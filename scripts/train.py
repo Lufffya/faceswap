@@ -10,6 +10,7 @@ from time import sleep
 
 import cv2
 
+from lib.image import read_image_meta
 from lib.keypress import KBHit
 from lib.multithreading import MultiThread
 from lib.utils import (get_folder, get_image_paths, FaceswapError, _image_extensions)
@@ -36,6 +37,10 @@ class Train():  # pylint:disable=too-few-public-methods
     def __init__(self, arguments):
         logger.debug("Initializing %s: (args: %s", self.__class__.__name__, arguments)
         self._args = arguments
+        if self._args.summary:
+            # If just outputting summary we don't need to initialize everything
+            return
+
         self._images = self._get_images()
         self._timelapse = self._set_timelapse()
         self._gui_preview_trigger = os.path.join(os.path.realpath(os.path.dirname(sys.argv[0])),
@@ -46,11 +51,10 @@ class Train():  # pylint:disable=too-few-public-methods
         self._preview_buffer = dict()
         self._lock = Lock()
 
-        self.trainer_name = self._args.trainer
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def _get_images(self):
-        """ Check the image folders exist and contains images and obtain image paths.
+        """ Check the image folders exist and contains valid extracted faces. Obtain image paths.
 
         Returns
         -------
@@ -66,13 +70,23 @@ class Train():  # pylint:disable=too-few-public-methods
                 logger.error("Error: '%s' does not exist", image_dir)
                 sys.exit(1)
 
-            images[side] = get_image_paths(image_dir)
+            images[side] = get_image_paths(image_dir, ".png")
             if not images[side]:
                 logger.error("Error: '%s' contains no images", image_dir)
                 sys.exit(1)
+            # Validate the first image is a detected face
+            test_image = next(img for img in images[side])
+            meta = read_image_meta(test_image)
+            logger.debug("Test file: (filename: %s, metadata: %s)", test_image, meta)
+            if "itxt" not in meta or "alignments" not in meta["itxt"]:
+                logger.error("The input folder '%s' contains images that are not extracted faces.",
+                             image_dir)
+                logger.error("You can only train a model on faces generated from Faceswap's "
+                             "extract process. Please check your sources and try again.")
+                sys.exit(1)
 
-        logger.info("Model A Directory: %s", self._args.input_a)
-        logger.info("Model B Directory: %s", self._args.input_b)
+            logger.info("Model %s Directory: '%s' (%s images)",
+                        side.upper(), image_dir, len(images[side]))
         logger.debug("Got image paths: %s", [(key, str(len(val)) + " images")
                                              for key, val in images.items()])
         self._validate_image_counts(images)
@@ -162,6 +176,9 @@ class Train():  # pylint:disable=too-few-public-methods
 
         Should only be called from  :class:`lib.cli.launcher.ScriptExecutor`
         """
+        if self._args.summary:
+            self._load_model()
+            return
         logger.debug("Starting Training Process")
         logger.info("Training data directory: %s", self._args.model_dir)
         thread = self._start_thread()
@@ -241,7 +258,7 @@ class Train():  # pylint:disable=too-few-public-methods
         """
         logger.debug("Loading Model")
         model_dir = str(get_folder(self._args.model_dir))
-        model = PluginLoader.get_model(self.trainer_name)(
+        model = PluginLoader.get_model(self._args.trainer)(
             model_dir,
             self._args,
             predict=False)

@@ -3,6 +3,7 @@
 
 from collections import OrderedDict
 from configparser import ConfigParser
+import gettext
 import logging
 import os
 import sys
@@ -15,6 +16,11 @@ from .custom_widgets import Tooltip
 from .utils import get_config, get_images
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
+
+# LOCALES
+_LANG = gettext.translation("gui.tooltips", localedir="locales", fallback=True)
+_ = _LANG.gettext
+
 _POPUP = []
 _CONFIG_FILES = []
 _CONFIGS = dict()
@@ -41,7 +47,10 @@ class _State():
             self._scan_for_configs()
         logger.debug("name: %s", name)
         if self._popup is not None:
-            logger.info("Popup already open. Returning: %s", _POPUP)
+            logger.debug("Restoring existing popup")
+            self._popup.update()
+            self._popup.deiconify()
+            self._popup.lift()
             return
         self._popup = _ConfigurePlugins(name, self._configs)
 
@@ -93,7 +102,7 @@ class _State():
 
 
 _STATE = _State()
-open_popup = _STATE.open_popup
+open_popup = _STATE.open_popup  # pylint:disable=invalid-name
 
 
 class _ConfigurePlugins(tk.Toplevel):
@@ -116,13 +125,15 @@ class _ConfigurePlugins(tk.Toplevel):
         self._set_geometry()
         self._tk_vars = dict(header=tk.StringVar())
 
+        theme = {**get_config().user_theme["group_panel"],
+                 **get_config().user_theme["group_settings"]}
         header_frame = self._build_header()
         content_frame = ttk.Frame(self)
 
-        self._tree = _Tree(content_frame, configurations, name).tree
+        self._tree = _Tree(content_frame, configurations, name, theme).tree
         self._tree.bind("<ButtonRelease-1>", self._select_item)
 
-        self._opts_frame = DisplayArea(content_frame, configurations, self._tree)
+        self._opts_frame = DisplayArea(content_frame, configurations, self._tree, theme)
         self._opts_frame.pack(fill=tk.BOTH, expand=True, side=tk.RIGHT)
         footer_frame = self._build_footer()
 
@@ -160,7 +171,7 @@ class _ConfigurePlugins(tk.Toplevel):
         lbl_header = ttk.Label(lbl_frame,
                                textvariable=self._tk_vars["header"],
                                anchor=tk.W,
-                               style="H1.TLabel")
+                               style="SPanel.Header1.TLabel")
         lbl_header.pack(fill=tk.X, expand=True, side=tk.LEFT)
 
         sep = ttk.Frame(header_frame, height=2, relief=tk.RIDGE)
@@ -195,15 +206,15 @@ class _ConfigurePlugins(tk.Toplevel):
                              width=10,
                              command=lambda: self._opts_frame.reset(page_only=True))
 
-        Tooltip(btn_cls, text="Close without saving", wraplength=720)
-        Tooltip(btn_save, text="Save this page's config", wraplength=720)
-        Tooltip(btn_rst, text="Reset this page's config to default values", wraplength=720)
+        Tooltip(btn_cls, text=_("Close without saving"), wrap_length=720)
+        Tooltip(btn_save, text=_("Save this page's config"), wrap_length=720)
+        Tooltip(btn_rst, text=_("Reset this page's config to default values"), wrap_length=720)
         Tooltip(btn_saveall,
-                text="Save all settings for the currently selected config",
-                wraplength=720)
+                text=_("Save all settings for the currently selected config"),
+                wrap_length=720)
         Tooltip(btn_rstall,
-                text="Reset all settings for the currently selected config to default values",
-                wraplength=720)
+                text=_("Reset all settings for the currently selected config to default values"),
+                wrap_length=720)
 
         btn_cls.pack(padx=2, side=tk.RIGHT)
         btn_save.pack(padx=2, side=tk.RIGHT)
@@ -247,10 +258,12 @@ class _Tree(ttk.Frame):  # pylint:disable=too-many-ancestors
     name: str
         The name of the section that is being navigated to. Used for opening on the correct
         page in the Tree View. ``None`` if no specific area is being navigated to
+    theme: dict
+        The color mapping for the settings pop-up theme
     """
-    def __init__(self, parent, configurations, name):
+    def __init__(self, parent, configurations, name, theme):
         super().__init__(parent)
-        self._fix_styles()
+        self._fix_styles(theme)
 
         frame = ttk.Frame(self, relief=tk.SOLID, borderwidth=1)
         self._tree = self._build_tree(frame, configurations, name)
@@ -268,19 +281,32 @@ class _Tree(ttk.Frame):  # pylint:disable=too-many-ancestors
         return self._tree
 
     @classmethod
-    def _fix_styles(cls):
+    def _fix_styles(cls, theme):
         """ Tkinter has a bug when setting the background style on certain OSes. This fixes the
         issue so we can set different colored backgrounds.
 
         We also set some default styles for our tree view.
+
+        Parameters
+        ----------
+        theme: dict
+            The color mapping for the settings pop-up theme
         """
         style = ttk.Style()
+
+        # Fix a bug in Tree-view that doesn't show alternate foreground on selection
         fix_map = lambda o: [elm for elm in style.map("Treeview", query_opt=o)  # noqa
                              if elm[:2] != ("!disabled", "!selected")]
-        style.map("Treeview", foreground=fix_map("foreground"), background=fix_map("background"))
+
         # Remove the Borders
-        style.configure("ConfigNav.Treeview", bd=0)
+        style.configure("ConfigNav.Treeview", bd=0, background="#F0F0F0")
         style.layout("ConfigNav.Treeview", [('ConfigNav.Treeview.treearea', {'sticky': 'nswe'})])
+
+        # Set colors
+        style.map("ConfigNav.Treeview",
+                  foreground=fix_map("foreground"),
+                  background=fix_map("background"))
+        style.map('ConfigNav.Treeview', background=[('selected', theme["tree_select"])])
 
     def _build_tree(self, parent, configurations, name):
         """ Build the configuration pop-up window.
@@ -368,10 +394,13 @@ class DisplayArea(ttk.Frame):  # pylint:disable=too-many-ancestors
     configurations: dict
         Dictionary containing the :class:`~lib.config.FaceswapConfig` object for each
         configuration section for the requested pop-up window
+    theme: dict
+        The color mapping for the settings pop-up theme
     """
-    def __init__(self, parent, configurations, tree):
+    def __init__(self, parent, configurations, tree, theme):
         super().__init__(parent)
         self._configs = configurations
+        self._theme = theme
         self._tree = tree
         self._vars = dict()
         self._cache = dict()
@@ -406,6 +435,10 @@ class DisplayArea(ttk.Frame):  # pylint:disable=too-many-ancestors
                         continue
                     initial_value = conf.config_dict[option]
                     initial_value = "none" if initial_value is None else initial_value
+                    if params["type"] == list and isinstance(initial_value, list):
+                        # Split multi-select lists into space separated strings for tk variables
+                        initial_value = " ".join(initial_value)
+
                     retval[key]["options"][option] = ControlPanelOption(
                         title=option,
                         dtype=params["type"],
@@ -414,6 +447,7 @@ class DisplayArea(ttk.Frame):  # pylint:disable=too-many-ancestors
                         initial_value=initial_value,
                         choices=params["choices"],
                         is_radio=params["gui_radio"],
+                        is_multi_option=params["type"] == list,
                         rounding=params["rounding"],
                         min_max=params["min_max"],
                         helptext=params["helptext"])
@@ -424,7 +458,7 @@ class DisplayArea(ttk.Frame):  # pylint:disable=too-many-ancestors
         """ Build the dynamic header text. """
         header_frame = ttk.Frame(self)
         var = tk.StringVar()
-        lbl = ttk.Label(header_frame, textvariable=var, anchor=tk.W, style="H2.TLabel")
+        lbl = ttk.Label(header_frame, textvariable=var, anchor=tk.W, style="SPanel.Header2.TLabel")
         lbl.pack(fill=tk.X, expand=True, side=tk.TOP)
         header_frame.pack(fill=tk.X, padx=5, pady=(5, 0), side=tk.TOP)
         self._vars["header"] = var
@@ -471,7 +505,6 @@ class DisplayArea(ttk.Frame):  # pylint:disable=too-many-ancestors
         key: str
             The lookup key to the settings cache
         """
-        panel_kwargs = dict(columns=1, max_columns=1, option_columns=4, blank_nones=False)
         info = self._config_cpanel_dict.get(key, None)
         if info is None:
             logger.debug("key '%s' does not exist in options. Creating links page.", key)
@@ -480,7 +513,11 @@ class DisplayArea(ttk.Frame):  # pylint:disable=too-many-ancestors
             self._cache[key] = ControlPanel(self,
                                             list(info["options"].values()),
                                             header_text=info["helptext"],
-                                            **panel_kwargs)
+                                            columns=1,
+                                            max_columns=1,
+                                            option_columns=4,
+                                            style="SPanel",
+                                            blank_nones=False)
 
     def _create_links_page(self, key):
         """ For headings which don't have settings, build a links page to the subsections.
@@ -498,13 +535,13 @@ class DisplayArea(ttk.Frame):  # pylint:disable=too-many-ancestors
         if not links:
             return frame
 
-        header_lbl = ttk.Label(frame, text="Select a plugin to configure:")
+        header_lbl = ttk.Label(frame, text=_("Select a plugin to configure:"))
         header_lbl.pack(side=tk.TOP, fill=tk.X, padx=5, pady=(5, 10))
         for link in sorted(links):
             lbl = ttk.Label(frame,
                             text=link.replace("_", " ").title(),
                             anchor=tk.W,
-                            foreground="blue",
+                            foreground=self._theme["link_color"],
                             cursor="hand2")
             lbl.pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0, 5))
             bind = "{}|{}".format(key, link)
@@ -602,6 +639,8 @@ class DisplayArea(ttk.Frame):  # pylint:disable=too-many-ancestors
                                  new_opt, ".".join([section, item]))
                 helptext = config.format_help(options["helptext"], is_section=False)
                 new_config.set(section, helptext)
+                if options["type"] == list:  # Comma separated multi select options
+                    new_opt = ", ".join(new_opt if isinstance(new_opt, list) else new_opt.split())
                 new_config.set(section, item, str(new_opt))
         config.config = new_config
         config.save_config()

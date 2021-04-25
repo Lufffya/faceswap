@@ -12,18 +12,13 @@ import logging
 import os
 import time
 
-from functools import partial
-
 import cv2
 import numpy as np
 
 import tensorflow as tf
 from tensorflow.python.framework import errors_impl as tf_errors
-from tqdm import tqdm
 
-from lib.align import Alignments, AlignedFace, DetectedFace, get_centered_size
-from lib.image import read_image_hash_batch
-from lib.training_data import TrainingDataGenerator
+from lib.training import TrainingDataGenerator
 from lib.utils import FaceswapError, get_backend, get_folder, get_image_paths
 from plugins.train._config import Config
 
@@ -79,11 +74,7 @@ class TrainerBase():
         self._images = images
         self._sides = sorted(key for key in self._images.keys())
 
-        self._feeder = _Feeder(images,
-                               self._model,
-                               batch_size,
-                               self._config,
-                               self._get_alignments_data())
+        self._feeder = _Feeder(images, self._model, batch_size, self._config)
 
         self._tensorboard = self._set_tensorboard()
         self._samples = _Samples(self._model,
@@ -120,46 +111,6 @@ class TrainerBase():
                              key, val, new_val)
                 config[key] = new_val
         return config
-
-    def _get_alignments_data(self):
-        """ Extrapolate alignments and masks from the alignments file into a `dict` for the
-        training data generator.
-
-        Returns
-        -------
-        dict:
-            Includes the key `aligned_faces` holding aligned face information and the key
-            `versions` indicating the alignments file versions that the faces have come from.
-            In addition, the following optional keys are provided: `masks` if masks are required
-            for training, `masks_eye` if eye masks are required and `masks_mouth` if mouth masks
-            are required. """
-        penalized_loss = self._model.config["penalized_mask_loss"]
-
-        alignments = _TrainingAlignments(self._model, self._images)
-        if (any(version == 1.0 for version in alignments.versions.values())
-                and self._config["centering"] != "legacy"):
-            logger.warning("You are using legacy extracted faces but have selected '%s' "
-                           "centering which is incompatible. Switching centering to 'legacy'",
-                           self._config["centering"])
-            self._config["centering"] = "legacy"
-            self._model.config["centering"] = "legacy"
-        retval = dict(aligned_faces=alignments.aligned_faces,
-                      versions=alignments.versions)
-
-        if self._model.config["learn_mask"] or penalized_loss:
-            logger.debug("Adding masks to training opts dict")
-            retval["masks"] = alignments.masks
-
-        if penalized_loss and self._model.config["eye_multiplier"] > 1:
-            retval["masks_eye"] = alignments.masks_eye
-
-        if penalized_loss and self._model.config["mouth_multiplier"] > 1:
-            retval["masks_mouth"] = alignments.masks_mouth
-
-        logger.debug({key: {k: v if isinstance(v, float) else len(v)
-                            for k, v in val.items()}
-                      for key, val in retval.items()})
-        return retval
 
     def _set_tensorboard(self):
         """ Set up Tensorboard callback for logging loss.
@@ -300,8 +251,10 @@ class TrainerBase():
     def _collate_and_store_loss(self, loss):
         """ Collate the loss into totals for each side.
 
-        The losses are then into a total for each side. Loss totals are added to
+        The losses are summed into a total for each side. Loss totals are added to
         :attr:`model.state._history` to track the loss drop per save iteration for backup purposes.
+
+        If NaN protection is enabled, Checks for NaNs and raises an error if detected.
 
         Parameters
         ----------
@@ -312,7 +265,18 @@ class TrainerBase():
         -------
         list
             List of 2 ``floats`` which is the total loss for each side
+
+        Raises
+        ------
+        FaceswapError
+            If a NaN is detected, a :class:`FaceswapError` will be raised
         """
+        # NaN protection
+        if self._config["nan_protection"] and not all(np.isfinite(val) for val in loss):
+            logger.critical("NaN Detected. Loss: %s", loss)
+            raise FaceswapError("A NaN was detected and you have NaN protection enabled. Training "
+                                "has been terminated.")
+
         split = len(loss) // 2
         combined_loss = [sum(loss[:split]), sum(loss[split:])]
         self._model.add_history(combined_loss)
@@ -359,17 +323,13 @@ class _Feeder():
         The size of the batch to be processed for each side at each iteration
     config: :class:`lib.config.FaceswapConfig`
         The configuration for this trainer
-    alignments: dict
-        A dictionary containing aligned face data, extract version information and masks if these
-        are required for training for each side
     """
-    def __init__(self, images, model, batch_size, config, alignments):
+    def __init__(self, images, model, batch_size, config):
         logger.debug("Initializing %s: num_images: %s, batch_size: %s, config: %s)",
                      self.__class__.__name__, len(images), batch_size, config)
         self._model = model
         self._images = images
         self._config = config
-        self._alignments = alignments
         self._target = dict()
         self._samples = dict()
         self._masks = dict()
@@ -400,10 +360,11 @@ class _Feeder():
         generator = TrainingDataGenerator(input_size,
                                           output_shapes,
                                           self._model.coverage_ratio,
+                                          self._model.color_order,
                                           not self._model.command_line_arguments.no_augment_color,
                                           self._model.command_line_arguments.no_flip,
+                                          self._model.command_line_arguments.no_warp,
                                           self._model.command_line_arguments.warp_to_landmarks,
-                                          self._alignments,
                                           self._config)
         return generator
 
@@ -786,6 +747,13 @@ class _Samples():  # pylint:disable=too-few-public-methods
         logger.debug("side: '%s', number of sample arrays: %s, prediction.shapes: %s)",
                      side, len(samples), [pred.shape for pred in predictions])
         full, faces = samples[:2]
+
+        if self._model.color_order.lower() == "rgb":  # Switch color order for RGB model display
+            full = full[..., ::-1]
+            faces = faces[..., ::-1]
+            predictions = [pred[..., ::-1] if pred.shape[-1] == 3 else pred
+                           for pred in predictions]
+
         full = self._process_full(side, full, predictions[0].shape[1], (0, 0, 255))
         images = [faces] + predictions
         if self._display_mask:
@@ -1058,411 +1026,6 @@ class _Timelapse():  # pylint:disable=too-few-public-methods
 
         cv2.imwrite(filename, image)
         logger.debug("Created time-lapse: '%s'", filename)
-
-
-class _TrainingAlignments():
-    """ Obtain Landmarks and required mask from alignments file.
-
-    Parameters
-    ----------
-    model: plugin from :mod:`plugins.train.model`
-        The model that will be running this trainer
-    image_list: dict
-        The file paths for the images to be trained on for each side. The dictionary should contain
-        2 keys ("a" and "b") with the values being a list of full paths corresponding to each side.
-    """
-    def __init__(self, model, image_list):
-        logger.debug("Initializing %s: (model: %s, image counts: %s)",
-                     self.__class__.__name__, model, {k: len(v) for k, v in image_list.items()})
-        self._args = model.command_line_arguments
-        self._config = model.config
-        self._alignments_paths = self._get_alignments_paths()
-        self._hashes, sizes = self._get_image_hashes(image_list)
-
-        self._alignments_version = dict()
-        self._detected_faces = dict()
-
-        self._load_alignments()
-        self._check_all_faces()
-
-        self._aligned_faces = self._get_aligned_faces(sizes)
-        logger.debug("Initialized %s", self.__class__.__name__)
-
-    @property
-    def aligned_faces(self):
-        """ dict: The "a", "b" keys for each side, containing a sub-dictionary with the
-        filename as key and :class:`lib.faces.detected_face.aligned` object as value. """
-        return self._aligned_faces
-
-    @property
-    def versions(self):
-        """ dict: The "a", "b" keys for each side, with value being the alignment file version
-        that provided the data. This is used to crop the faces correctly based on whether the
-        extracted faces are legacy or full-head extracts. """
-        return self._alignments_version
-
-    def _get_alignments_paths(self):
-        """ Obtain the alignments file paths from the command line arguments passed to the model.
-
-        If the argument does not exist or is empty, then scan the input folder for an alignments
-        file.
-
-        Returns
-        -------
-        dict
-            The alignments paths for each of the source and destination faces. Key is the
-            side, value is the path to the alignments file
-
-        Raises
-        ------
-        FaceswapError
-            If at least one alignments file does not exist
-        """
-        retval = dict()
-        for side in ("a", "b"):
-            alignments_path = getattr(self._args, "alignments_path_{}".format(side))
-            if not alignments_path:
-                image_path = getattr(self._args, "input_{}".format(side))
-                alignments_path = os.path.join(image_path, "alignments.fsa")
-            if not os.path.exists(alignments_path):
-                raise FaceswapError("Alignments file does not exist: `{}`".format(alignments_path))
-            retval[side] = alignments_path
-        logger.debug("Alignments paths: %s", retval)
-        return retval
-
-    def _get_aligned_faces(self, input_sizes):
-        """ Pre-generate aligned faces as they are needed for all training functions.
-
-        Parameters
-        ----------
-        input_sizes: dict
-            The training image sizes in pixels for side `a` and `b` as they are saved on disk
-
-        Returns
-        -------
-        dict
-            The "a", "b" keys for each side, containing a sub-dictionary with the
-            filename as key and :class:`lib.faces.detected_face.AlignedFace` object as value.
-        """
-        retval = dict()
-        for side, detected_faces in self._detected_faces.items():
-            ret_side = dict()
-            size = get_centered_size("legacy" if self._alignments_version[side] == 1.0 else "head",
-                                     self._config["centering"],
-                                     input_sizes[side])
-            for fhash, face in detected_faces.items():
-                face.aligned = AlignedFace(face.landmarks_xy,
-                                           centering=self._config["centering"],
-                                           size=size,
-                                           is_aligned=True)
-                for filename in self._hash_to_filenames(side, fhash):
-                    ret_side[filename] = face.aligned
-            retval[side] = ret_side
-        return retval
-
-    # Get masks
-    @property
-    def masks(self):
-        """ dict: The :class:`lib.align.Mask` objects of requested mask type for
-        keys a" and "b"
-        """
-        retval = {side: self._get_masks(side, detected_faces)
-                  for side, detected_faces in self._detected_faces.items()}
-        logger.trace(retval)
-        return retval
-
-    def _get_masks(self, side, detected_faces):
-        """ For each face, obtain the mask and set the requested blurring and threshold level.
-
-        Parameters
-        ----------
-        side: {"a" or "b"}
-            The side currently being processed
-        detected_faces: dict
-            Key is the hash of the face, value is the corresponding
-            :class:`lib.align.DetectedFace` object
-
-        Returns
-        -------
-        dict
-            The face filenames as keys with the :class:`lib.align.Mask` as value.
-        """
-        masks = dict()
-        for fhash, face in detected_faces.items():
-            mask = face.mask[self._config["mask_type"]]
-            mask.set_blur_and_threshold(blur_kernel=self._config["mask_blur_kernel"],
-                                        threshold=self._config["mask_threshold"])
-            if self._alignments_version[side] > 1.0 and self._config["centering"] == "legacy":
-                mask.set_sub_crop(face.aligned.pose.offset["face"] * -1)
-            for filename in self._hash_to_filenames(side, fhash):
-                masks[filename] = mask
-        return masks
-
-    @property
-    def masks_eye(self):
-        """ dict: filename mapping to zip compressed eye masks for keys "a" and "b" """
-        retval = {side: self._get_landmarks_masks(side, detected_faces, "eyes")
-                  for side, detected_faces in self._detected_faces.items()}
-        return retval
-
-    @property
-    def masks_mouth(self):
-        """ dict: filename mapping to zip compressed mouth masks for keys "a" and "b" """
-        retval = {side: self._get_landmarks_masks(side, detected_faces, "mouth")
-                  for side, detected_faces in self._detected_faces.items()}
-        return retval
-
-    def _get_landmarks_masks(self, side, detected_faces, area):
-        """ Obtain the area landmarks masks for the given area.
-
-        Parameters
-        ----------
-        side: {"a" or "b"}
-            The side currently being processed
-        detected_faces: dict
-            Key is the hash of the face, value is the corresponding
-            :class:`lib.align.DetectedFace` object
-        area: {"eyes" or "mouth"}
-            The area of the face to obtain the mask for
-
-        Returns
-        -------
-        dict
-            The face filenames as keys with the zip compressed mask as value.
-        """
-        logger.trace("side: %s, detected_faces: %s, area: %s", side, detected_faces, area)
-        masks = dict()
-        size = list(self._aligned_faces[side].values())[0].size
-        for fhash, face in detected_faces.items():
-            mask = partial(face.get_landmark_mask,
-                           size,
-                           area,
-                           aligned=True,
-                           centering=self._config["centering"],
-                           dilation=size // 32,
-                           blur_kernel=size // 16,
-                           as_zip=True)
-            for filename in self._hash_to_filenames(side, fhash):
-                masks[filename] = mask
-        logger.trace("side: %s, area: %s, masks: %s",
-                     side, area, {key: type(val) for key, val in masks.items()})
-        return masks
-
-    # Hashes for image folders
-    @classmethod
-    def _get_image_hashes(cls, image_list):
-        """ Return the hashes for all images used for training.
-
-        Parameters
-        ----------
-        image_list: dict
-            The file paths for the images to be trained on for each side. The dictionary should
-            contain 2 keys ("a" and "b") with the values being a list of full paths corresponding
-            to each side.
-
-        Returns
-        -------
-        dict
-            For keys "a" and "b" the values are a ``dict`` with the key being the sha1 hash and
-            the value being a list of filenames that correspond to the hash for images that exist
-            within the training data folder
-        """
-        hashes = {key: dict() for key in image_list}
-        sizes = {key: None for key in image_list}
-        for side, filelist in image_list.items():
-            logger.debug("side: %s, file count: %s", side, len(filelist))
-            for filename, hsh, shape in tqdm(
-                    read_image_hash_batch(filelist, output_shape=True),
-                    desc="Reading training images ({})".format(side.upper()),
-                    total=len(filelist),
-                    leave=False):
-                hashes[side].setdefault(hsh, list()).append(filename)
-                if shape[0] != shape[1]:
-                    msg = ("Training images must be created by the extraction process and must be "
-                           "square.\nThe image '{}' has dimensions {}x{} so the process cannot "
-                           "continue.\nThere may be more images with these issues. Please double "
-                           "check your dataset".format(filename, shape[1], shape[0]))
-                    raise FaceswapError(msg)
-                if not sizes[side]:
-                    sizes[side] = shape[0]
-                if shape[0] != sizes[side]:
-                    msg = ("All training images for each side must be of the same size.\nImages "
-                           "in side '{}' have mismatched sizes {} and {}.\nPlease double check "
-                           "your dataset".format(side.upper(), sizes[side], shape[0]))
-                    raise FaceswapError(msg)
-        logger.trace(hashes, sizes)
-        return hashes, sizes
-
-    # Hashes for Detected Faces
-    def _load_alignments(self):
-        """ Load the alignments and convert to :class:`lib.align.DetectedFace` objects.
-
-        Assign the alignments file version to :attr:`_alignments_version` and the converted
-        detected faces to :attr:`_detected_faces` for each side
-        """
-        logger.debug("Loading alignments")
-        for side, fullpath in self._alignments_paths.items():
-            logger.debug("side: '%s', path: '%s'", side, fullpath)
-            path, filename = os.path.split(fullpath)
-            alignments = Alignments(path, filename=filename)
-            self._detected_faces[side] = self._to_detected_faces(alignments, side)
-            self._alignments_version[side] = alignments.version
-
-        if 1.0 in self._alignments_version.values() and self._config["centering"] != "legacy":
-            logger.debug("Updating alignments config to legacy for old facesets")
-            self._config["centering"] = "legacy"
-
-        logger.debug("alignments_versions: %s, detected_faces: %s, ", self._alignments_version,
-                     {k: len(v) for k, v in self._detected_faces.items()})
-
-    def _to_detected_faces(self, alignments, side):
-        """ Convert alignments to DetectedFace objects.
-
-        Filter the detected faces to only those that exist in the training folders.
-
-        Parameters
-        ----------
-        alignments: :class:`lib.align.Alignments`
-            The alignments for the current faces
-        side: {"a" or "b"}
-            The side being processed
-
-        Returns
-        -------
-        dict
-            key is sha1 hash of face, value is the corresponding
-            :class:`lib.align.DetectedFace` object
-        """
-        skip_count = 0
-        dupe_count = 0
-        side_hashes = set(self._hashes[side])
-        detected_faces = dict()
-        for _, faces, _, filename in alignments.yield_faces():
-            for idx, face in enumerate(faces):
-                if face["hash"] in detected_faces:
-                    dupe_count += 1
-                    logger.debug("Face already exists, skipping: '%s'", filename)
-                if not self._validate_face(face, filename, idx, side, side_hashes):
-                    skip_count += 1
-                    continue
-                detected_face = DetectedFace()
-                detected_face.from_alignment(face)
-                detected_faces[face["hash"]] = detected_face
-        logger.debug("Detected Faces count: %s, Skipped faces count: %s, duplicate faces "
-                     "count: %s", len(detected_faces), skip_count, dupe_count)
-        if skip_count != 0:
-            logger.warning("%s alignments have been removed as their corresponding faces do not "
-                           "exist in the input folder for side %s. Run in verbose mode if you "
-                           "wish to see which alignments have been excluded.",
-                           skip_count, side.upper())
-        return detected_faces
-
-    # Validation
-    def _validate_face(self, face, filename, idx, side, side_hashes):
-        """ Validate that the currently processing face has a corresponding hash entry and the
-        requested mask exists
-
-        Parameters
-        ----------
-        face: dict
-            A face retrieved from an alignments file
-        filename: str
-            The original frame filename that the given face comes from
-        idx: int
-            The index of the face in the frame
-        side: {'A', 'B'}
-            The side that this face belongs to
-        side_hashes: set
-            A set of hashes that exist in the alignments folder for these faces
-
-        Returns
-        -------
-        bool
-            ``True`` if the face is valid otherwise ``False``
-
-        Raises
-        ------
-        FaceswapError
-            If the current face doesn't pass validation
-        """
-        mask_type = self._config["mask_type"]
-        if mask_type is not None and "mask" not in face:
-            msg = ("You have selected a Mask Type in your training configuration options but at "
-                   "least one face has no mask stored for it.\nYou should generate the required "
-                   "masks with the Mask Tool or set the Mask Type configuration option to `none`."
-                   "\nThe face that caused this failure was side: `{}`, frame: `{}`, index: {}. "
-                   "However there are probably more faces without masks".format(
-                       side.upper(), filename, idx))
-            raise FaceswapError(msg)
-
-        if mask_type is not None and mask_type not in face["mask"]:
-            msg = ("At least one of your faces does not have the mask `{}` stored for it.\nYou "
-                   "should run the Mask Tool to generate this mask for your faceset or "
-                   "select a different mask in the training configuration options.\n"
-                   "The face that caused this failure was [side: `{}`, frame: `{}`, index: {}]. "
-                   "The masks that exist for this face are: {}.\nBe aware that there are probably "
-                   "more faces without this Mask Type".format(
-                       mask_type, side.upper(), filename, idx, list(face["mask"].keys())))
-            raise FaceswapError(msg)
-
-        if face["hash"] not in side_hashes:
-            logger.verbose("Skipping alignment for non-existant face in frame '%s' index: %s",
-                           filename, idx)
-            return False
-        return True
-
-    def _check_all_faces(self):
-        """ Ensure that all faces in the training folder exist in the alignments file.
-        If not, output missing filenames
-
-        Raises
-        ------
-        FaceswapError
-            If there are faces in the training folder which do not exist in the alignments file
-        """
-        logger.debug("Checking faces exist in alignments")
-        missing_alignments = dict()
-        for side, train_hashes in self._hashes.items():
-            align_hashes = set(self._detected_faces[side])
-            if not align_hashes.issuperset(set(train_hashes)):
-                missing_alignments[side] = [
-                    os.path.basename(filename)
-                    for hsh, filenames in train_hashes.items()
-                    for filename in filenames
-                    if hsh not in align_hashes]
-        if missing_alignments:
-            msg = ("There are faces in your training folder(s) which do not exist in your "
-                   "alignments file. Training cannot continue. See above for a full list of "
-                   "files missing alignments.")
-            for side, filelist in missing_alignments.items():
-                logger.error("Faces missing alignments for side %s: %s",
-                             side.capitalize(), filelist)
-            raise FaceswapError(msg)
-
-    # Utils
-    def _hash_to_filenames(self, side, face_hash):
-        """ For a given hash return all the filenames that match for the given side.
-
-        Notes
-        -----
-        Multiple faces can have the same hash, so this makes sure that all filenames are updated
-        for all instances of a hash.
-
-        Parameters
-        ----------
-        side: {"a" or "b"}
-            The side currently being processed
-        face_hash: str
-            The sha1 hash of the face to obtain the filename for
-
-        Returns
-        -------
-        list
-            The filenames that exist for the given hash
-        """
-        retval = self._hashes[side][face_hash]
-        logger.trace("side: %s, hash: %s, filenames: %s", side, face_hash, retval)
-        return retval
 
 
 def _stack_images(images):

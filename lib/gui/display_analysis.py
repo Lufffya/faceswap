@@ -2,6 +2,7 @@
 """ Analysis tab of Display Frame of the Faceswap GUI """
 
 import csv
+import gettext
 import logging
 import os
 import tkinter as tk
@@ -10,10 +11,14 @@ from tkinter import ttk
 from .custom_widgets import Tooltip
 from .display_page import DisplayPage
 from .popup_session import SessionPopUp
-from .stats import Session
+from .analysis import Session
 from .utils import FileHandler, get_config, get_images, LongRunningTask
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
+
+# LOCALES
+_LANG = gettext.translation("gui.tooltips", localedir="locales", fallback=True)
+_ = _LANG.gettext
 
 
 class Analysis(DisplayPage):  # pylint: disable=too-many-ancestors
@@ -204,7 +209,7 @@ class Analysis(DisplayPage):  # pylint: disable=too-many-ancestors
 
         Parameters
         ----------
-        session: :class:`lib.gui.stats.Session`
+        session: :class:`lib.gui.analysis.Session`
             The session object to generate the summary for
         """
         return session.full_summary
@@ -235,7 +240,7 @@ class Analysis(DisplayPage):  # pylint: disable=too-many-ancestors
          """
         logger.debug("Loading session")
         if full_path is None:
-            full_path = FileHandler("filename", "state").retfile
+            full_path = FileHandler("filename", "state").return_file
             if not full_path:
                 return
         self._clear_session()
@@ -271,7 +276,7 @@ class Analysis(DisplayPage):  # pylint: disable=too-many-ancestors
             logger.debug("No summary data loaded. Nothing to save")
             print("No summary data loaded. Nothing to save")
             return
-        savefile = FileHandler("save", "csv").retfile
+        savefile = FileHandler("save", "csv").return_file
         if not savefile:
             logger.debug("No save file. Returning")
             return
@@ -317,7 +322,7 @@ class _Options():  # pylint:disable=too-few-public-methods
                              command=cmd)
             btn.pack(padx=2, side=tk.RIGHT)
             hlp = self._set_help(btntype)
-            Tooltip(btn, text=hlp, wraplength=200)
+            Tooltip(btn, text=hlp, wrap_length=200)
             buttons[btntype] = btn
         logger.debug("buttons: %s", buttons)
         return buttons
@@ -334,13 +339,13 @@ class _Options():  # pylint:disable=too-few-public-methods
         logger.debug("Setting help")
         hlp = ""
         if button_type == "reload":
-            hlp = "Load/Refresh stats for the currently training session"
+            hlp = _("Load/Refresh stats for the currently training session")
         elif button_type == "clear":
-            hlp = "Clear currently displayed session stats"
+            hlp = _("Clear currently displayed session stats")
         elif button_type == "save":
-            hlp = "Save session stats to csv"
+            hlp = _("Save session stats to csv")
         elif button_type == "load":
-            hlp = "Load saved session stats"
+            hlp = _("Load saved session stats")
         return hlp
 
     def _add_training_callback(self):
@@ -439,7 +444,7 @@ class StatsData(ttk.Frame):  # pylint: disable=too-many-ancestors
         self._tree.configure(yscrollcommand=self._scrollbar.set)
         self._tree.tag_configure("total", background="black", foreground="white")
         self._tree.bind("<ButtonRelease-1>", self._select_item)
-        Tooltip(self._tree, text=helptext, wraplength=200)
+        Tooltip(self._tree, text=helptext, wrap_length=200)
         return self._tree_columns()
 
     def _tree_columns(self):

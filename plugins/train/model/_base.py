@@ -64,6 +64,32 @@ def KerasModel(inputs, outputs, name):  # pylint:disable=invalid-name
     return KModel(inputs, outputs, name=name)
 
 
+def _get_all_sub_models(model, models=None):
+    """ For a given model, return all sub-models that occur (recursively) as children.
+
+    Parameters
+    ----------
+    model: :class:`keras.models.Model`
+        A Keras model to scan for sub models
+    models: `None`
+        Do not provide this parameter. It is used for recursion
+
+    Returns
+    -------
+    list
+        A list of all :class:`keras.models.Model`s found within the given model. The provided
+        model will always be returned in the first position
+    """
+    if models is None:
+        models = [model]
+    else:
+        models.append(model)
+    for layer in model.layers:
+        if isinstance(layer, KModel):
+            _get_all_sub_models(layer, models=models)
+    return models
+
+
 class ModelBase():
     """ Base class that all model plugins should inherit from.
 
@@ -98,6 +124,7 @@ class ModelBase():
 
         self.input_shape = None  # Must be set within the plugin after initializing
         self.trainer = "original"  # Override for plugin specific trainer
+        self.color_order = "bgr"  # Override for plugin specific image color channel order
 
         self._args = arguments
         self._is_predict = predict
@@ -253,6 +280,7 @@ class ModelBase():
         Finally, a model summary is outputted to the logger at verbose level.
         """
         self._update_legacy_models()
+        is_summary = hasattr(self._args, "summary") and self._args.summary
         with self._settings.strategy_scope():
             if self._io.model_exists:
                 model = self._io._load()  # pylint:disable=protected-access
@@ -265,7 +293,7 @@ class ModelBase():
                 self._validate_input_shape()
                 inputs = self._get_inputs()
                 self._model = self.build_model(inputs)
-            if not self._is_predict:
+            if not is_summary and not self._is_predict:
                 self._compile_model()
             self._output_summary()
 
@@ -355,10 +383,13 @@ class ModelBase():
 
     def _output_summary(self):
         """ Output the summary of the model and all sub-models to the verbose logger. """
-        self._model.summary(print_fn=lambda x: logger.verbose("%s", x))
-        for layer in self._model.layers:
-            if isinstance(layer, KModel):
-                layer.summary(print_fn=lambda x: logger.verbose("%s", x))
+        if hasattr(self._args, "summary") and self._args.summary:
+            print_fn = None  # Print straight to stdout
+        else:
+            # print to logger
+            print_fn = lambda x: logger.verbose("%s", x)  # noqa
+        for model in _get_all_sub_models(self._model):
+            model.summary(print_fn=print_fn)
 
     def save(self):
         """ Save the model to disk.
@@ -381,15 +412,20 @@ class ModelBase():
         optimizer = _Optimizer(self.config["optimizer"],
                                self.config["learning_rate"],
                                self.config.get("clipnorm", False),
+                               10 ** int(self.config["epsilon_exponent"]),
                                self._args).optimizer
         if self._settings.use_mixed_precision:
             optimizer = self._settings.loss_scale_optimizer(optimizer)
         if get_backend() == "amd":
             self._rewrite_plaid_outputs()
+
+        weights = _Weights(self)
+        weights.load(self._io.model_exists)
+        weights.freeze()
+
         self._loss.configure(self._model)
         self._model.compile(optimizer=optimizer, loss=self._loss.functions)
-        if not self._is_predict:
-            self._state.add_session_loss_names(self._loss.names)
+        self._state.add_session_loss_names(self._loss.names)
         logger.debug("Compiled Model: %s", self._model)
 
     def _rewrite_plaid_outputs(self):
@@ -516,7 +552,27 @@ class _IO():
             logger.error("Model could not be found in folder '%s'. Exiting", self._model_dir)
             sys.exit(1)
 
-        model = load_model(self._filename, compile=False)
+        try:
+            model = load_model(self._filename, compile=False)
+        except RuntimeError as err:
+            if "unable to get link info" in str(err).lower():
+                msg = (f"Unable to load the model from '{self._filename}'. This may be a "
+                       "temporary error but most likely means that your model has corrupted.\n"
+                       "You can try to load the model again but if the problem persists you "
+                       "should use the Restore Tool to restore your model from backup.\n"
+                       f"Original error: {str(err)}")
+                raise FaceswapError(msg)
+            raise err
+        except KeyError as err:
+            if "unable to open object" in str(err).lower():
+                msg = (f"Unable to load the model from '{self._filename}'. This may be a "
+                       "temporary error but most likely means that your model has corrupted.\n"
+                       "You can try to load the model again but if the problem persists you "
+                       "should use the Restore Tool to restore your model from backup.\n"
+                       f"Original error: {str(err)}")
+                raise FaceswapError(msg)
+            raise err
+
         logger.info("Loaded model from disk: '%s'", self._filename)
         return model
 
@@ -641,7 +697,7 @@ class _Settings():
         self._set_tf_settings(allow_growth, arguments.exclude_gpus)
 
         use_mixed_precision = not is_predict and mixed_precision and get_backend() == "nvidia"
-        # Mixed precision moved out of experimental in tf 2.4
+        # Mixed precision moved out of experimental in tensorflow 2.4
         if use_mixed_precision and self._tf_version[0] == 2 and self._tf_version[1] < 4:
             self._mixed_precision = tf.keras.mixed_precision.experimental
         elif use_mixed_precision:
@@ -679,7 +735,8 @@ class _Settings():
         :class:`tf.keras.mixed_precision.loss_scale_optimizer.LossScaleOptimizer`
             The original optimizer with loss scaling applied
         """
-        # tf versions < 2.4 had different kwargs where scaling needs to be explicitly defined
+        # tensorflow versions < 2.4 had different kwargs where scaling needs to be explicitly
+        # defined
         vers = self._tf_version
         kwargs = dict(loss_scale="dynamic") if vers[0] == 2 and vers[1] < 4 else dict()
         logger.debug("tf version: %s, kwargs: %s", vers, kwargs)
@@ -760,7 +817,7 @@ class _Settings():
 
         if exclude_gpus and self._tf_version[0] == 2 and self._tf_version[1] == 2:
             # TODO remove this hacky fix to disable mixed precision compatibility testing when
-            # tf 2.2 support dropped
+            # tensorflow 2.2 support dropped
             # pylint:disable=import-outside-toplevel,protected-access,import-error
             from tensorflow.python.keras.mixed_precision.experimental import \
                 device_compatibility_check
@@ -830,6 +887,193 @@ class _Settings():
         return retval
 
 
+class _Weights():
+    """ Handling of freezing and loading model weights
+
+    Parameters
+    ----------
+    plugin: :class:`Model`
+        The parent plugin class that owns the IO functions.
+    """
+    def __init__(self, plugin):
+        logger.debug("Initializing %s: (plugin: %s)", self.__class__.__name__, plugin)
+        self._model = plugin.model
+        self._name = plugin.name
+        self._do_freeze = plugin._args.freeze_weights
+        self._weights_file = self._check_weights_file(plugin._args.load_weights)
+
+        freeze_layers = plugin.config.get("freeze_layers")  # Standardized config for freezing
+        load_layers = plugin.config.get("loading_layers")  # Standardized config for loading
+        self._freeze_layers = freeze_layers if freeze_layers else ["encoder"]  # No plugin config
+        self._load_layers = load_layers if load_layers else ["encoder"]  # No plugin config
+        logger.debug("Initialized %s", self.__class__.__name__)
+
+    @classmethod
+    def _check_weights_file(cls, weights_file):
+        """ Validate that we have a valid path to a .h5 file.
+
+        Parameters
+        ----------
+        weights_file: str
+            The full path to a weights file
+
+        Returns
+        -------
+        str
+            The full path to a weights file
+        """
+        if not weights_file:
+            logger.debug("No weights file selected.")
+            return None
+
+        msg = ""
+        if not os.path.exists(weights_file):
+            msg = "Load weights selected, but the path '%s' does not exist."
+        elif not os.path.splitext(weights_file)[-1].lower() == ".h5":
+            msg = "Load weights selected, but the path '%s' is not a valid Keras model (.h5) file."
+
+        if msg:
+            msg += " Please check and try again."
+            logger.error(msg)
+
+        logger.verbose("Using weights file: %s", weights_file)
+        return weights_file
+
+    def freeze(self):
+        """ If freeze has been selected in the cli arguments, then freeze those models indicated
+        in the plugin's configuration. """
+        # Blanket unfreeze layers, as checking the value of :attr:`layer.trainable` appears to
+        # return ``True`` even when the weights have been frozen
+        # TODO this may cause some issues with some keras-app models that are meant to have some
+        # frozen layers
+        for layer in _get_all_sub_models(self._model):
+            layer.trainable = True
+
+        if not self._do_freeze:
+            logger.debug("Freeze weights deselected. Not freezing")
+            return
+
+        for layer in _get_all_sub_models(self._model):
+            if layer.name in self._freeze_layers:
+                logger.info("Freezing weights for '%s' in model '%s'", layer.name, self._name)
+                layer.trainable = False
+                self._freeze_layers.remove(layer.name)
+        if self._freeze_layers:
+            logger.warning("The following layers were set to be frozen but do not exist in the "
+                           "model: %s", self._freeze_layers)
+
+    def load(self, model_exists):
+        """ Load weights for newly created models, or output warning for pre-existing models.
+
+        Parameters
+        ----------
+        model_exists: bool
+            ``True`` if a model pre-exists and is being resumed, ``False`` if this is a new model
+        """
+        if not self._weights_file:
+            logger.debug("No weights file provided. Not loading weights.")
+            return
+        if model_exists and self._weights_file:
+            logger.warning("Ignoring weights file '%s' as this model is resuming.",
+                           self._weights_file)
+            return
+
+        weights_models = self._get_weights_model()
+        all_models = _get_all_sub_models(self._model)
+
+        for model_name in self._load_layers:
+            sub_model = next((lyr for lyr in all_models if lyr.name == model_name), None)
+            sub_weights = next((lyr for lyr in weights_models if lyr.name == model_name), None)
+
+            if not sub_model or not sub_weights:
+                msg = f"Skipping layer {model_name} as not in "
+                msg += "current_model." if not sub_model else f"weights '{self._weights_file}.'"
+                logger.warning(msg)
+                continue
+
+            logger.info("Loading weights for layer '%s'", model_name)
+            skipped_ops = 0
+            loaded_ops = 0
+            for layer in sub_model.layers:
+                success = self._load_layer_weights(layer, sub_weights, model_name)
+                if success == 0:
+                    skipped_ops += 1
+                elif success == 1:
+                    loaded_ops += 1
+
+        del weights_models
+
+        if loaded_ops == 0:
+            raise FaceswapError(f"No weights were succesfully loaded from your weights file: "
+                                f"'{self._weights_file}'. Please check and try again.")
+        if skipped_ops > 0:
+            logger.warning("%s weight(s) were unable to be loaded for your model. This is most "
+                           "likely because the weights you are trying to load were trained with "
+                           "different settings than you have set for your current model.",
+                           skipped_ops)
+
+    def _get_weights_model(self):
+        """ Obtain a list of all sub-models contained within the weights model.
+
+        Returns
+        -------
+        list
+            List of all models contained within the .h5 file
+
+        Raises
+        ------
+        FaceswapError
+            In the event of a failure to load the weights, or the weights belonging to a different
+            model
+        """
+        retval = _get_all_sub_models(load_model(self._weights_file, compile=False))
+        if not retval:
+            raise FaceswapError(f"Error loading weights file {self._weights_file}.")
+
+        if retval[0].name != self._name:
+            raise FaceswapError(f"You are attempting to load weights from a '{retval[0].name}' "
+                                f"model into a '{self._name}' model. This is not supported.")
+        return retval
+
+    def _load_layer_weights(self, layer, sub_weights, model_name):
+        """ Load the weights for a single layer.
+
+        Parameters
+        ----------
+        layer: :class:`keras.layers.Layer`
+            The layer to set the weights for
+        sub_weights: list
+            The list of layers in the weights model to load weights from
+        model_name: str
+            The name of the current sub-model that is having it's weights loaded
+
+        Returns
+        -------
+        int
+            `-1` if the layer has no weights to load. `0` if weights loading was unsuccessful. `1`
+            if weights loading was successful
+        """
+        old_weights = layer.get_weights()
+        if not old_weights:
+            logger.debug("Skipping layer without weights: %s", layer.name)
+            return -1
+
+        layer_weights = next((lyr for lyr in sub_weights.layers if lyr.name == layer.name), None)
+        if not layer_weights:
+            logger.warning("The weights file '%s' for layer '%s' does not contain weights for "
+                           "'%s'. Skipping", self._weights_file, model_name, layer.name)
+            return 0
+
+        new_weights = layer_weights.get_weights()
+        if old_weights[0].shape != new_weights[0].shape:
+            logger.warning("The weights for layer '%s' are of incompatible shapes. Skipping.",
+                           layer.name)
+            return 0
+        logger.verbose("Setting weights for '%s'", layer.name)
+        layer.set_weights(layer_weights.get_weights())
+        return 1
+
+
 class _Optimizer():  # pylint:disable=too-few-public-methods
     """ Obtain the selected optimizer with the appropriate keyword arguments.
 
@@ -841,20 +1085,22 @@ class _Optimizer():  # pylint:disable=too-few-public-methods
         The selected learning rate to use
     clipnorm: bool
         Whether to clip gradients to avoid exploding/vanishing gradients
+    epsilon: float
+        The value to use for the epsilon of the optimizer
     arguments: :class:`argparse.Namespace`
         The arguments that were passed to the train or convert process as generated from
         Faceswap's command line arguments
     """
-    def __init__(self, optimizer, learning_rate, clipnorm, arguments):
+    def __init__(self, optimizer, learning_rate, clipnorm, epsilon, arguments):
         logger.debug("Initializing %s: (optimizer: %s, learning_rate: %s, clipnorm: %s, "
-                     "arguments: %s", self.__class__.__name__, optimizer, learning_rate, clipnorm,
-                     arguments)
+                     "epsilon: %s, arguments: %s)", self.__class__.__name__,
+                     optimizer, learning_rate, clipnorm, epsilon, arguments)
         optimizers = {"adam": Adam, "nadam": Nadam, "rms-prop": RMSprop}
         self._optimizer = optimizers[optimizer]
 
-        base_kwargs = {"adam": dict(beta_1=0.5, beta_2=0.99),
-                       "nadam": dict(beta_1=0.5, beta_2=0.99),
-                       "rms-prop": dict()}
+        base_kwargs = {"adam": dict(beta_1=0.5, beta_2=0.99, epsilon=epsilon),
+                       "nadam": dict(beta_1=0.5, beta_2=0.99, epsilon=epsilon),
+                       "rms-prop": dict(epsilon=epsilon)}
         self._kwargs = base_kwargs[optimizer]
 
         self._configure(learning_rate, clipnorm, arguments)
@@ -1369,12 +1615,11 @@ class _Inference():  # pylint:disable=too-few-public-methods
         logger.debug("Initializing: %s (saved_model: %s, switch_sides: %s)",
                      self.__class__.__name__, saved_model, switch_sides)
         self._config = saved_model.get_config()
-        input_idx = 1 if switch_sides else 0
-        self._output_idx = 0 if switch_sides else 1
-        self._input_names = set(self._filter_node(self._config["input_layers"][input_idx]))
 
-        self._inputs = self._get_inputs(saved_model.inputs, input_idx)
-        self._outputs_dropout = self._get_outputs_dropout()
+        self._input_idx = 1 if switch_sides else 0
+        self._output_idx = 0 if switch_sides else 1
+
+        self._input_names = [inp[0] for inp in self._config["input_layers"]]
         self._model = self._make_inference_model(saved_model)
         logger.debug("Initialized: %s", self.__class__.__name__)
 
@@ -1383,72 +1628,25 @@ class _Inference():  # pylint:disable=too-few-public-methods
         """ :class:`keras.models.Model`: The Faceswap model, compiled for inference. """
         return self._model
 
-    @classmethod
-    def _filter_node(cls, node):
+    def _get_nodes(self, nodes):
         """ Given in input list of nodes from a :attr:`keras.models.Model.get_config` dictionary,
-        filters the information out and unravels the dictionary into a more usable format
+        filters the layer name(s) and output index of the node, splitting to the correct output
+        index in the event of multiple inputs.
 
         Parameters
         ----------
-        node: list
+        nodes: list
             A node entry from the :attr:`keras.models.Model.get_config` dictionary
 
         Returns
         -------
         list
-            A squeezed list with only the layer name entries remaining
+            The (node name, output index) for each node passed in
         """
-        retval = np.array(node)[..., 0].squeeze().tolist()
-        return retval if isinstance(retval, list) else [retval]
-
-    @classmethod
-    def _get_inputs(cls, inputs, input_index):
-        """ Obtain the inputs for the requested swap direction.
-
-        Parameters
-        ----------
-        inputs: list
-            The full list of input tensors to the saved faceswap training model
-        input_index: int
-            The input index for the requested swap direction
-
-        Returns
-        -------
-        list
-            List of input tensors to feed the model for the requested swap direction
-        """
-        input_split = len(inputs) // 2
-        start_idx = input_split * input_index
-        retval = inputs[start_idx: start_idx + input_split]
-        logger.debug("model inputs: %s, input_split: %s, start_idx: %s, inference_inputs: %s",
-                     inputs, input_split, start_idx, retval)
-        return retval
-
-    def _get_outputs_dropout(self):
-        """ Obtain the output layer names from the full model that will not be used for inference.
-
-        Returns
-        -------
-        set
-            The output layer names from the saved Faceswap model that are not used for inference
-            for the requested swap direction
-        """
-        outputs = self._config["output_layers"]
-        if get_backend() == "amd":
-            outputs = [outputs[:len(outputs) // 2], outputs[len(outputs) // 2:]]
-
-        output_names = self._filter_node(outputs)
-        if not all(isinstance(name, list) for name in output_names):
-            output_names = [[name] for name in output_names]
-        side_outputs = set(output_names[self._output_idx])
-        logger.debug("model outputs: %s, output_names: %s, side_outputs: %s",
-                     outputs, output_names, side_outputs)
-
-        outputs_all = {layer
-                       for side in output_names
-                       for layer in side}
-        retval = outputs_all.difference(side_outputs)
-        logger.debug("outputs dropout: %s", retval)
+        nodes = np.array(nodes, dtype="object")[..., :3]
+        num_layers = nodes.shape[0]
+        nodes = nodes[self._output_idx] if num_layers == 2 else nodes[0]
+        retval = [(node[0], node[2]) for node in nodes]
         return retval
 
     def _make_inference_model(self, saved_model):
@@ -1466,91 +1664,109 @@ class _Inference():  # pylint:disable=too-few-public-methods
         """
         logger.debug("Compiling inference model. saved_model: %s", saved_model)
         struct = self._get_filtered_structure()
-        required_layers = self._get_required_layers(struct)
-        logger.debug("Compiling model")
-        layer_dict = {layer.name: layer for layer in saved_model.layers}
+        model_inputs = self._get_inputs(saved_model.inputs)
         compiled_layers = dict()
-        for name, inbound in struct.items():
-            if name not in required_layers:
-                logger.debug("Skipping unused layer: '%s'", name)
+        for layer in saved_model.layers:
+            if layer.name not in struct:
+                logger.debug("Skipping unused layer: '%s'", layer.name)
                 continue
-            layer = layer_dict[name]
+            inbound = struct[layer.name]
             logger.debug("Processing layer '%s': (layer: %s, inbound_nodes: %s)",
-                         name, layer, inbound)
+                         layer.name, layer, inbound)
             if not inbound:
-                logger.debug("Adding model inputs %s: %s", self._input_names, self._inputs)
-                model = layer(self._inputs)
+                model = model_inputs
+                logger.debug("Adding model inputs %s: %s", layer.name, model)
             else:
-                layer_inputs = [compiled_layers[inp] for inp in inbound]
-                logger.debug("Compiling layer '%s': layer inputs: %s", name, layer_inputs)
+                layer_inputs = []
+                for inp in inbound:
+                    inbound_layer = compiled_layers[inp[0]]
+                    if isinstance(inbound_layer, list) and len(inbound_layer) > 1:
+                        # Multi output inputs
+                        inbound_output_idx = inp[1]
+                        next_input = inbound_layer[inbound_output_idx]
+                        logger.debug("Selecting output index %s from multi output inbound layer: "
+                                     "%s (using: %s)", inbound_output_idx, inbound_layer,
+                                     next_input)
+                    else:
+                        next_input = inbound_layer
+
+                    if get_backend() == "amd" and isinstance(next_input, list):
+                        # tensorflow.keras and keras 2.2 behave differently for layer inputs
+                        layer_inputs.extend(next_input)
+                    else:
+                        layer_inputs.append(next_input)
+
+                logger.debug("Compiling layer '%s': layer inputs: %s", layer.name, layer_inputs)
                 model = layer(layer_inputs)
-            compiled_layers[name] = model
-        retval = KerasModel(self._inputs, model, name="{}_inference".format(saved_model.name))
+            compiled_layers[layer.name] = model
+            retval = KerasModel(model_inputs, model, name="{}_inference".format(saved_model.name))
         logger.debug("Compiled inference model '%s': %s", retval.name, retval)
         return retval
 
     def _get_filtered_structure(self):
-        """ Obtain the structure of the full model, filtering out inbound nodes and
-        layers that are not required for the requested swap destination.
+        """ Obtain the structure of the inference model.
 
-        Input layers to the full model are not returned in the structure.
+        This parses the model config (in reverse) to obtain the required layers for an inference
+        model.
 
         Returns
         -------
         :class:`collections.OrderedDict`
-            The layer name as key with the inbound node layer names for each layer as value.
+            The layer name as key with the input name and output index as value.
         """
-        retval = OrderedDict()
-        for layer in self._config["layers"]:
-            name = layer["name"]
-            if not layer["inbound_nodes"]:
-                logger.debug("Skipping input layer: '%s'", name)
-                continue
-            inbound = self._filter_node(layer["inbound_nodes"])
+        # Filter output layer
+        out = np.array(self._config["output_layers"], dtype="object")
+        if out.ndim == 2:
+            out = np.expand_dims(out, axis=1)  # Needs to be expanded for _get_nodes
+        outputs = self._get_nodes(out)
 
-            if self._input_names.intersection(inbound):
-                # Strip the input inbound nodes for applying the correct input layer at compile
-                # time
-                logger.debug("Stripping inbound nodes for input '%s': %s", name, inbound)
-                inbound = ""
+        # Iterate backwards from the required output to get the reversed model structure
+        current_layers = [outputs[0]]
+        next_layers = []
+        struct = OrderedDict()
+        drop_input = self._input_names[abs(self._input_idx - 1)]
+        switch_input = self._input_names[self._input_idx]
+        while True:
+            layer_info = current_layers.pop(0)
+            current_layer = next(lyr for lyr in self._config["layers"]
+                                 if lyr["name"] == layer_info[0])
+            inbound = current_layer["inbound_nodes"]
 
-            if inbound and np.array(layer["inbound_nodes"]).shape[0] == 2:
-                # if inbound is not populated, then layer is already split at input
-                logger.debug("Filtering layer with split inbound nodes: '%s': %s", name, inbound)
-                inbound = inbound[self._output_idx]
-                inbound = inbound if isinstance(inbound, list) else [inbound]
-                logger.debug("Filtered inbound nodes for layer '%s': %s", name, inbound)
-            if name in self._outputs_dropout:
-                logger.debug("Dropping output layer '%s'", name)
-                continue
-            retval[name] = inbound
-        logger.debug("Model structure: %s", retval)
-        return retval
+            if not inbound:
+                break
 
-    @classmethod
-    def _get_required_layers(cls, filtered_structure):
-        """ Parse through the filtered model structure in reverse order to get the required layers
-        from the faceswap model for creating an inference model.
+            inbound_info = self._get_nodes(inbound)
+
+            if any(inb[0] == drop_input for inb in inbound_info):  # Switch inputs
+                inbound_info = [(switch_input if inb[0] == drop_input else inb[0], inb[1])
+                                for inb in inbound_info]
+            struct[layer_info[0]] = inbound_info
+            next_layers.extend(inbound_info)
+
+            if not current_layers:
+                current_layers = next_layers
+                next_layers = []
+
+        struct[switch_input] = []  # Add the input layer
+        logger.debug("Model structure: %s", struct)
+        return struct
+
+    def _get_inputs(self, inputs):
+        """ Obtain the inputs for the requested swap direction.
 
         Parameters
         ----------
-        filtered_structure: :class:`OrderedDict`
-            The full model structure with unused inbound nodes and layers removed
+        inputs: list
+            The full list of input tensors to the saved faceswap training model
 
         Returns
         -------
-        set
-            The layers from the saved model that are required to build the inference model
+        list
+            List of input tensors to feed the model for the requested swap direction
         """
-        retval = set()
-        for idx, (name, inbound) in enumerate(reversed(filtered_structure.items())):
-            if idx == 0:
-                logger.debug("Adding output layer: '%s'", name)
-                retval.add(name)
-            if idx != 0 and name not in retval:
-                logger.debug("Skipping unused layer: '%s'", name)
-                continue
-            logger.debug("Adding inbound layers: %s", inbound)
-            retval.update(inbound)
-        logger.debug("Required layers: %s", retval)
+        input_split = len(inputs) // 2
+        start_idx = input_split * self._input_idx
+        retval = inputs[start_idx: start_idx + input_split]
+        logger.debug("model inputs: %s, input_split: %s, start_idx: %s, inference_inputs: %s",
+                     inputs, input_split, start_idx, retval)
         return retval

@@ -3,6 +3,7 @@
 
 from lib.utils import get_backend
 
+from .normalization import *
 if get_backend() == "amd":
     from . import losses_plaid as losses
 else:

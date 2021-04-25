@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageTk
 
 from ._config import Config as UserConfig
 from .project import Project, Tasks
+from .theme import Style
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 _CONFIG = None
@@ -88,11 +89,11 @@ class FileHandler():  # pylint:disable=too-few-public-methods
 
     Parameters
     ----------
-    handle_type: ['open', 'save', 'filename', 'filename_multi', 'savefilename', 'context', `dir`]
+    handle_type: ['open', 'save', 'filename', 'filename_multi', 'save_filename', 'context', `dir`]
         The type of file dialog to return. `open` and `save` will perform the open and save actions
         and return the file. `filename` returns the filename from an `open` dialog.
         `filename_multi` allows for multi-selection of files and returns a list of files selected.
-        `savefilename` returns the filename from a `save as` dialog. `context` is a context
+        `save_filename` returns the filename from a `save as` dialog. `context` is a context
         sensitive parameter that returns a certain dialog based on the current options. `dir` asks
         for a folder location.
     file_type: ['default', 'alignments', 'config_project', 'config_task', 'config_all', 'csv', \
@@ -115,13 +116,13 @@ class FileHandler():  # pylint:disable=too-few-public-methods
 
     Attributes
     ----------
-    retfile: str or object
+    return_file: str or object
         The return value from the file dialog
 
     Example
     -------
     >>> handler = FileHandler('filename', 'video', title='Select a video...')
-    >>> video_file = handler.retfile
+    >>> video_file = handler.return_file
     >>> print(video_file)
     '/path/to/selected/video.mp4'
     """
@@ -140,37 +141,38 @@ class FileHandler():  # pylint:disable=too-few-public-methods
                                         command,
                                         action,
                                         variable)
-        self.retfile = getattr(self, "_{}".format(self._handletype.lower()))()
+        self.return_file = getattr(self, "_{}".format(self._handletype.lower()))()
         logger.debug("Initialized %s", self.__class__.__name__)
 
     @property
     def _filetypes(self):
         """ dict: The accepted extensions for each file type for opening/saving """
         all_files = ("All files", "*.*")
-        filetypes = {"default": (all_files,),
-                     "alignments": [("Faceswap Alignments", "*.fsa"),
-                                    all_files],
-                     "config_project": [("Faceswap Project files", "*.fsw"), all_files],
-                     "config_task": [("Faceswap Task files", "*.fst"), all_files],
-                     "config_all": [("Faceswap Project and Task files", "*.fst *.fsw"), all_files],
-                     "csv": [("Comma separated values", "*.csv"), all_files],
-                     "image": [("Bitmap", "*.bmp"),
-                               ("JPG", "*.jpeg *.jpg"),
-                               ("PNG", "*.png"),
-                               ("TIFF", "*.tif *.tiff"),
-                               all_files],
-                     "ini": [("Faceswap config files", "*.ini"), all_files],
-                     "state": [("State files", "*.json"), all_files],
-                     "log": [("Log files", "*.log"), all_files],
-                     "video": [("Audio Video Interleave", "*.avi"),
-                               ("Flash Video", "*.flv"),
-                               ("Matroska", "*.mkv"),
-                               ("MOV", "*.mov"),
-                               ("MP4", "*.mp4"),
-                               ("MPEG", "*.mpeg *.mpg *.ts *.vob"),
-                               ("WebM", "*.webm"),
-                               ("Windows Media Video", "*.wmv"),
-                               all_files]}
+        filetypes = dict(
+            default=(all_files,),
+            alignments=[("Faceswap Alignments", "*.fsa"), all_files],
+            config_project=[("Faceswap Project files", "*.fsw"), all_files],
+            config_task=[("Faceswap Task files", "*.fst"), all_files],
+            config_all=[("Faceswap Project and Task files", "*.fst *.fsw"), all_files],
+            csv=[("Comma separated values", "*.csv"), all_files],
+            image=[("Bitmap", "*.bmp"),
+                   ("JPG", "*.jpeg *.jpg"),
+                   ("PNG", "*.png"),
+                   ("TIFF", "*.tif *.tiff"),
+                   all_files],
+            ini=[("Faceswap config files", "*.ini"), all_files],
+            model=[("Keras model files", "*.h5"), all_files],
+            state=[("State files", "*.json"), all_files],
+            log=[("Log files", "*.log"), all_files],
+            video=[("Audio Video Interleave", "*.avi"),
+                   ("Flash Video", "*.flv"),
+                   ("Matroska", "*.mkv"),
+                   ("MOV", "*.mov"),
+                   ("MP4", "*.mp4"),
+                   ("MPEG", "*.mpeg *.mpg *.ts *.vob"),
+                   ("WebM", "*.webm"),
+                   ("Windows Media Video", "*.wmv"),
+                   all_files])
 
         # Add in multi-select options and upper case extensions for Linux
         for key in filetypes:
@@ -190,28 +192,22 @@ class FileHandler():  # pylint:disable=too-few-public-methods
     def _contexts(self):
         """dict: Mapping of commands, actions and their corresponding file dialog for context
         handle types. """
-        return {
-            "effmpeg": {
-                "input": {
-                    "extract": "filename",
-                    "gen-vid": "dir",
-                    "get-fps": "filename",
-                    "get-info": "filename",
-                    "mux-audio": "filename",
-                    "rescale": "filename",
-                    "rotate": "filename",
-                    "slice": "filename"},
-                "output": {
-                    "extract": "dir",
-                    "gen-vid": "savefilename",
-                    "get-fps": "nothing",
-                    "get-info": "nothing",
-                    "mux-audio": "savefilename",
-                    "rescale": "savefilename",
-                    "rotate": "savefilename",
-                    "slice": "savefilename"}
-                }
-            }
+        return dict(effmpeg=dict(input={"extract": "filename",
+                                        "gen-vid": "dir",
+                                        "get-fps": "filename",
+                                        "get-info": "filename",
+                                        "mux-audio": "filename",
+                                        "rescale": "filename",
+                                        "rotate": "filename",
+                                        "slice": "filename"},
+                                 output={"extract": "dir",
+                                         "gen-vid": "save_filename",
+                                         "get-fps": "nothing",
+                                         "get-info": "nothing",
+                                         "mux-audio": "save_filename",
+                                         "rescale": "save_filename",
+                                         "rotate": "save_filename",
+                                         "slice": "save_filename"}))
 
     def _set_defaults(self):
         """ Set the default file type for the file dialog. Generally the first found file type
@@ -222,7 +218,7 @@ class FileHandler():  # pylint:disable=too-few-public-methods
         dict:
             The default file extension for each file type
         """
-        defaults = {key: val[0][1].replace("*", "")
+        defaults = {key: next(ext for ext in val[0][1].split(" ")).replace("*", "")
                     for key, val in self._filetypes.items()}
         defaults["default"] = None
         defaults["video"] = ".mp4"
@@ -252,9 +248,9 @@ class FileHandler():  # pylint:disable=too-few-public-methods
             kwargs["initialdir"] = initialdir
 
         if self._handletype.lower() in (
-                "open", "save", "filename", "filename_multi", "savefilename"):
+                "open", "save", "filename", "filename_multi", "save_filename"):
             kwargs["filetypes"] = self._filetypes[filetype]
-            if self._defaults.get(filetype, None):
+            if self._defaults.get(filetype):
                 kwargs['defaultextension'] = self._defaults[filetype]
         if self._handletype.lower() == "save":
             kwargs["mode"] = "w"
@@ -503,7 +499,14 @@ class Images():
         if not image_files:
             return
 
-        self._load_images_to_cache(image_files, frame_dims, thumbnail_size)
+        if not self._load_images_to_cache(image_files, frame_dims, thumbnail_size):
+            logger.debug("Failed to load any preview images")
+            if gui_preview in image_files:
+                # Reset last modified for failed loading of a gui preview image so it is picked
+                # up next time
+                self._previewcache["modified"] = None
+            return
+
         if image_files == [gui_preview]:
             # Delete the preview image so that the main scripts know to output another
             logger.debug("Deleting preview image")
@@ -555,22 +558,43 @@ class Images():
             The (width (`int`), height (`int`)) of the display panel that will display the preview
         thumbnail_size: int
             The size of each thumbnail that should be created
+
+        Returns
+        -------
+        bool
+            ``True`` if images were successfully loaded to cache otherwise ``False``
         """
         logger.debug("Number image_files: %s, frame_dims: %s, thumbnail_size: %s",
                      len(image_files), frame_dims, thumbnail_size)
         num_images = (frame_dims[0] // thumbnail_size) * (frame_dims[1] // thumbnail_size)
         logger.debug("num_images: %s", num_images)
         if num_images == 0:
-            return
+            return False
         samples = list()
         start_idx = len(image_files) - num_images if len(image_files) > num_images else 0
         show_files = sorted(image_files, key=os.path.getctime)[start_idx:]
+        dropped_files = list()
         for fname in show_files:
-            img = Image.open(fname)
+            try:
+                img = Image.open(fname)
+            except PermissionError as err:
+                logger.debug("Permission error opening preview file: '%s'. Original error: %s",
+                             fname, str(err))
+                dropped_files.append(fname)
+                continue
             width, height = img.size
             scaling = thumbnail_size / max(width, height)
             logger.debug("image width: %s, height: %s, scaling: %s", width, height, scaling)
-            img = img.resize((int(width * scaling), int(height * scaling)))
+
+            try:
+                img = img.resize((int(width * scaling), int(height * scaling)))
+            except OSError as err:
+                # Image only gets loaded when we call a method, so may error on partial loads
+                logger.debug("OS Error resizing preview image: '%s'. Original error: %s",
+                             fname, err)
+                dropped_files.append(fname)
+                continue
+
             if img.size[0] != img.size[1]:
                 # Pad to square
                 new_img = Image.new("RGB", (thumbnail_size, thumbnail_size))
@@ -580,7 +604,16 @@ class Images():
             draw = ImageDraw.Draw(img)
             draw.rectangle(((0, 0), (thumbnail_size, thumbnail_size)), outline="#E5E5E5", width=1)
             samples.append(np.array(img))
+
         samples = np.array(samples)
+        if not np.any(samples):
+            logger.debug("No preview images collected.")
+            return False
+
+        if dropped_files:
+            logger.debug("Removing dropped files: %s", dropped_files)
+            show_files = [fname for fname in show_files if fname not in dropped_files]
+
         self._previewcache["filenames"] = (self._previewcache["filenames"] +
                                            show_files)[-num_images:]
         cache = self._previewcache["images"]
@@ -592,6 +625,7 @@ class Images():
             cache = np.concatenate((cache, samples))[-num_images:]
         self._previewcache["images"] = cache
         logger.debug("Cache shape: %s", self._previewcache["images"].shape)
+        return True
 
     def _place_previews(self, frame_dims):
         """ Format the preview thumbnails stored in the cache into a grid fitting the display
@@ -785,6 +819,8 @@ class Config():
             status_bar=statusbar,
             command_notebook=None)  # set in command.py
         self._user_config = UserConfig(None)
+        self._style = Style(self.default_font, root, PATHCACHE)
+        self._user_theme = self._style.user_theme
         logger.debug("Initialized %s", self.__class__.__name__)
 
     # Constants
@@ -871,6 +907,11 @@ class Config():
     def user_config_dict(self):
         """ dict: The GUI config in dict form. """
         return self._user_config.config_dict
+
+    @property
+    def user_theme(self):
+        """ dict: The GUI theme selection options. """
+        return self._user_theme
 
     @property
     def default_font(self):
@@ -1012,8 +1053,8 @@ class Config():
         generatecommand = tk.StringVar()
         generatecommand.set(None)
 
-        consoleclear = tk.BooleanVar()
-        consoleclear.set(False)
+        console_clear = tk.BooleanVar()
+        console_clear.set(False)
 
         refreshgraph = tk.BooleanVar()
         refreshgraph.set(False)
@@ -1024,15 +1065,15 @@ class Config():
         analysis_folder = tk.StringVar()
         analysis_folder.set(None)
 
-        tk_vars = {"display": display,
-                   "runningtask": runningtask,
-                   "istraining": istraining,
-                   "action": actioncommand,
-                   "generate": generatecommand,
-                   "consoleclear": consoleclear,
-                   "refreshgraph": refreshgraph,
-                   "updatepreview": updatepreview,
-                   "analysis_folder": analysis_folder}
+        tk_vars = dict(display=display,
+                       runningtask=runningtask,
+                       istraining=istraining,
+                       action=actioncommand,
+                       generate=generatecommand,
+                       console_clear=console_clear,
+                       refreshgraph=refreshgraph,
+                       updatepreview=updatepreview,
+                       analysis_folder=analysis_folder)
         logger.debug(tk_vars)
         return tk_vars
 

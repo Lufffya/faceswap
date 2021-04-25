@@ -2,6 +2,7 @@
 """ Pop-up Graph launched from the Analysis tab of the Faceswap GUI """
 
 import csv
+import gettext
 import logging
 import tkinter as tk
 from tkinter import ttk
@@ -9,10 +10,14 @@ from tkinter import ttk
 from .control_helper import ControlBuilder, ControlPanelOption
 from .custom_widgets import Tooltip
 from .display_graph import SessionGraph
-from .stats import Calculations, Session
+from .analysis import Calculations, Session
 from .utils import FileHandler, get_images, LongRunningTask
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
+
+# LOCALES
+_LANG = gettext.translation("gui.tooltips", localedir="locales", fallback=True)
+_ = _LANG.gettext
 
 
 class SessionPopUp(tk.Toplevel):
@@ -129,7 +134,7 @@ class SessionPopUp(tk.Toplevel):
             self._vars[item.lower().strip()] = var
 
             hlp = self._set_help(item)
-            Tooltip(cmbframe, text=hlp, wraplength=200)
+            Tooltip(cmbframe, text=hlp, wrap_length=200)
 
             cmb.pack(fill=tk.X, side=tk.RIGHT)
             lblcmb.pack(padx=(0, 2), side=tk.LEFT)
@@ -161,7 +166,7 @@ class SessionPopUp(tk.Toplevel):
 
             ctl = ttk.Checkbutton(frame, variable=var, text=text)
             hlp = self._set_help(item)
-            Tooltip(ctl, text=hlp, wraplength=200)
+            Tooltip(ctl, text=hlp, wrap_length=200)
             ctl.pack(side=tk.TOP, padx=5, pady=5, anchor=tk.W)
 
         logger.debug("Built Check Buttons")
@@ -183,7 +188,7 @@ class SessionPopUp(tk.Toplevel):
                 continue
 
             text = loss_key.replace("_", " ").title()
-            helptext = "Display {}".format(text)
+            helptext = _("Display {}").format(text)
 
             var = tk.BooleanVar()
             var.set(True)
@@ -198,7 +203,7 @@ class SessionPopUp(tk.Toplevel):
                 section_added = True
 
             ctl = ttk.Checkbutton(frame, variable=var, text=text)
-            Tooltip(ctl, text=helptext, wraplength=200)
+            Tooltip(ctl, text=helptext, wrap_length=200)
             ctl.pack(side=tk.TOP, padx=5, pady=5, anchor=tk.W)
 
         self._vars["loss_keys"] = lk_vars
@@ -235,7 +240,7 @@ class SessionPopUp(tk.Toplevel):
                                         min_max=min_max,
                                         helptext=self._set_help(item))
             self._vars[item] = slider.tk_var
-            ControlBuilder(frame, slider, 1, 19, None, True)
+            ControlBuilder(frame, slider, 1, 19, None, "Analysis.", True)
         logger.debug("Built Sliders")
 
     def _opts_buttons(self, frame):
@@ -259,7 +264,7 @@ class SessionPopUp(tk.Toplevel):
                              image=get_images().icons[btntype],
                              command=cmd)
             hlp = self._set_help(btntype)
-            Tooltip(btn, text=hlp, wraplength=200)
+            Tooltip(btn, text=hlp, wrap_length=200)
             btn.pack(padx=2, side=tk.RIGHT)
 
         lblstatus.pack(side=tk.LEFT, anchor=tk.W, fill=tk.X, expand=True)
@@ -284,7 +289,7 @@ class SessionPopUp(tk.Toplevel):
     def _option_button_save(self):
         """ Action for save button press. """
         logger.debug("Saving File")
-        savefile = FileHandler("save", "csv").retfile
+        savefile = FileHandler("save", "csv").return_file
         if not savefile:
             logger.debug("Save Cancelled")
             return
@@ -334,28 +339,28 @@ class SessionPopUp(tk.Toplevel):
         hlp = ""
         action = action.lower()
         if action == "reload":
-            hlp = "Refresh graph"
+            hlp = _("Refresh graph")
         elif action == "save":
-            hlp = "Save display data to csv"
+            hlp = _("Save display data to csv")
         elif action == "avgiterations":
-            hlp = "Number of data points to sample for rolling average"
+            hlp = _("Number of data points to sample for rolling average")
         elif action == "smoothamount":
-            hlp = "Set the smoothing amount. 0 is no smoothing, 0.99 is maximum smoothing"
+            hlp = _("Set the smoothing amount. 0 is no smoothing, 0.99 is maximum smoothing")
         elif action == "outliers":
-            hlp = "Flatten data points that fall more than 1 standard " \
-                  "deviation from the mean to the mean value."
+            hlp = _("Flatten data points that fall more than 1 standard deviation from the mean "
+                    "to the mean value.")
         elif action == "avg":
-            hlp = "Display rolling average of the data"
+            hlp = _("Display rolling average of the data")
         elif action == "smoothed":
-            hlp = "Smooth the data"
+            hlp = _("Smooth the data")
         elif action == "raw":
-            hlp = "Display raw data"
+            hlp = _("Display raw data")
         elif action == "trend":
-            hlp = "Display polynormal data trend"
+            hlp = _("Display polynormal data trend")
         elif action == "display":
-            hlp = "Set the data to display"
+            hlp = _("Set the data to display")
         elif action == "scale":
-            hlp = "Change y-axis scale"
+            hlp = _("Change y-axis scale")
         return hlp
 
     def _compile_display_data(self):
@@ -414,11 +419,11 @@ class SessionPopUp(tk.Toplevel):
         Parameters
         ----------
         kwargs: dict
-            The keyword arguments to pass to `lib.gui.stats.Calculations`
+            The keyword arguments to pass to `lib.gui.analysis.Calculations`
 
         Returns
         -------
-        :class:`lib.gui.stats.Calculations`
+        :class:`lib.gui.analysis.Calculations`
             The summarized results for the given session
         """
         return Calculations(**kwargs)

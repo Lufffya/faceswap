@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """ The Faces Viewer Frame and Canvas for Faceswap's Manual Tool. """
 import colorsys
+import gettext
 import logging
 import platform
 import tkinter as tk
@@ -18,6 +19,10 @@ from .viewport import Viewport
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
+# LOCALES
+_LANG = gettext.translation("tools.manual", localedir="locales", fallback=True)
+_ = _LANG.gettext
+
 
 class FacesFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
     """ The faces display frame (bottom section of GUI). This frame holds the faces viewport and
@@ -25,7 +30,7 @@ class FacesFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
 
     Parameters
     ----------
-    parent: :class:`tkinter.PanedWindow`
+    parent: :class:`ttk.PanedWindow`
         The paned window that the faces frame resides in
     tk_globals: :class:`~tools.manual.manual.TkGlobals`
         The tkinter variables that apply to the whole of the GUI
@@ -155,8 +160,8 @@ class FacesActionsFrame(ttk.Frame):  # pylint:disable=too-many-ancestors
     def _helptext(self):
         """ dict: `button key`: `button helptext`. The help text to display for each button. """
         inverse_keybindings = {val: key for key, val in self.key_bindings.items()}
-        retval = dict(mesh="Display the landmarks mesh",
-                      mask="Display the mask")
+        retval = dict(mesh=_("Display the landmarks mesh"),
+                      mask=_("Display the mask"))
         for item in retval:
             retval[item] += " ({})".format(inverse_keybindings[item])
         return retval
@@ -238,7 +243,10 @@ class FacesViewer(tk.Canvas):   # pylint:disable=too-many-ancestors
         logger.debug("Initializing %s: (parent: %s, tk_globals: %s, tk_action_vars: %s, "
                      "detected_faces: %s, display_frame: %s, event: %s)", self.__class__.__name__,
                      parent, tk_globals, tk_action_vars, detected_faces, display_frame, event)
-        super().__init__(parent, bd=0, highlightthickness=0, bg="#bcbcbc")
+        super().__init__(parent,
+                         bd=0,
+                         highlightthickness=0,
+                         bg=get_config().user_theme["group_panel"]["panel_background"])
         self.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, anchor=tk.E)
         self._sizes = dict(tiny=32, small=64, medium=96, large=128, extralarge=192)
 
