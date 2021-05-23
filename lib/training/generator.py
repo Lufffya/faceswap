@@ -129,8 +129,11 @@ class _Cache():
     def aligned_landmarks(self):
         """ dict: The filename as key, aligned landmarks as value """
         if self._aligned_landmarks is None:
-            self._aligned_landmarks = {key: val["aligned_face"].landmarks
-                                       for key, val in self._cache.items()}
+            with self._lock:
+                # For Warp-To-Landmarks a race condition can occur where this is referenced from
+                # the opposite side prior to it being populated, so block on a lock.
+                self._aligned_landmarks = {key: val["aligned_face"].landmarks
+                                           for key, val in self._cache.items()}
         return self._aligned_landmarks
 
     @property
@@ -203,7 +206,10 @@ class _Cache():
 
             if len(batch.shape) == 1:
                 folder = os.path.dirname(filenames[0])
-                details = [f"{key} ({img.shape[1]}px)" for key, img in zip(keys, batch)]
+                details = [
+                    "{0} ({1})".format(
+                        key, f"{img.shape[1]}px" if isinstance(img, np.ndarray) else type(img))
+                    for key, img in zip(keys, batch)]
                 msg = (f"There are mismatched image sizes in the folder '{folder}'. All training "
                        "images for each side must have the same dimensions.\nThe batch that "
                        f"failed contains the following files:\n{details}.")
@@ -386,8 +392,9 @@ class _Cache():
         mask.set_blur_and_threshold(blur_kernel=self._config["mask_blur_kernel"],
                                     threshold=self._config["mask_threshold"])
 
-        if self._extract_version > 1.0 and self._centering == "legacy":
-            mask.set_sub_crop(self._cache[key]["aligned_face"].pose.offset["face"] * -1)
+        pose = self._cache[key]["aligned_face"].pose
+        mask.set_sub_crop(pose.offset[self._centering] - pose.offset[mask.stored_centering],
+                          self._centering)
 
         logger.trace("Caching mask for: %s", filename)
         self._cache[key]["mask"] = mask
@@ -642,7 +649,7 @@ class TrainingDataGenerator():  # pylint:disable=too-few-public-methods
 
         # Switch color order for RGB models
         if self._color_order == "rgb":
-            batch = batch[..., [2, 1, 0, 3]]
+            batch[..., :3] = batch[..., [2, 1, 0]]
 
         # Add samples to output if this is for display
         if self._processing.is_display:

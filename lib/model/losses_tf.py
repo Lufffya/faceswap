@@ -592,4 +592,5 @@ class LossWrapper(tf.keras.losses.Loss):
 
         n_true = K.concatenate([y_true[:, :, :, i:i+1] * mask for i in range(3)], axis=-1)
         n_pred = K.concatenate([y_pred[:, :, :, i:i+1] * mask for i in range(3)], axis=-1)
+
         return n_true, n_pred
