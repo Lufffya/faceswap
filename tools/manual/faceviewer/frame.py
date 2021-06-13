@@ -269,7 +269,8 @@ class FacesViewer(tk.Canvas):   # pylint:disable=too-many-ancestors
         """ int: The currently selected thumbnail size in pixels """
         scaling = get_config().scaling_factor
         size = self._sizes[self._globals.tk_faces_size.get().lower().replace(" ", "")]
-        return int(round(size * scaling))
+        scaled = size * scaling
+        return int(round(scaled / 2) * 2)
 
     @property
     def viewport(self):
@@ -529,7 +530,8 @@ class Grid():
         height = self.dimensions[1]
         visible = (max(0, floor(height * self._canvas.yview()[0]) - self._face_size),
                    ceil(height * self._canvas.yview()[1]))
-        logger.trace("visible: %s", visible)
+        logger.trace("height: %s, yview: %s, face_size: %s, visible: %s",
+                     height, self._canvas.yview(), self._face_size, visible)
         y_points = self._grid[3, :, 1]
         top = np.searchsorted(y_points, visible[0], side="left")
         bottom = np.searchsorted(y_points, visible[1], side="right")
@@ -650,7 +652,8 @@ class Grid():
         labels = np.array((self._raw_indices["frame"] + padding,
                            self._raw_indices["face"] + padding),
                           dtype="int").reshape((2, rows, columns))
-        logger.debug(labels.shape)
+        logger.debug("face-count: %s, columns: %s, rows: %s, remainder: %s, padding: %s, labels "
+                     "shape: %s", face_count, columns, rows, remainder, padding, labels.shape)
         return labels
 
     def _get_display_faces(self):
