@@ -9,8 +9,8 @@ from importlib import import_module
 
 from lib.gpu_stats import set_exclude_devices, GPUStats
 from lib.logger import crash_log, log_setup
-from lib.utils import (FaceswapError, get_backend, KerasFinder, safe_shutdown, set_backend,
-                       set_system_verbosity)
+from lib.utils import (FaceswapError, get_backend, get_tf_version, safe_shutdown,
+                       set_backend, set_system_verbosity)
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
@@ -41,7 +41,7 @@ class ScriptExecutor():  # pylint:disable=too-few-public-methods
         self._test_for_tf_version()
         self._test_for_gui()
         cmd = os.path.basename(sys.argv[0])
-        src = "tools.{}".format(self._command.lower()) if cmd == "tools.py" else "scripts"
+        src = f"tools.{self._command.lower()}" if cmd == "tools.py" else "scripts"
         mod = ".".join((src, self._command.lower()))
         module = import_module(mod)
         script = getattr(module, self._command.title())
@@ -53,15 +53,16 @@ class ScriptExecutor():  # pylint:disable=too-few-public-methods
         Raises
         ------
         FaceswapError
-            If Tensorflow is not found, or is not between versions 2.2 and 2.6
+            If Tensorflow is not found, or is not between versions 2.4 and 2.8
         """
-        min_ver = 2.2
-        max_ver = 2.6
+        amd_ver = 2.2
+        min_ver = 2.4
+        max_ver = 2.8
         try:
             # Ensure tensorflow doesn't pin all threads to one core when using Math Kernel Library
             os.environ["TF_MIN_GPU_MULTIPROCESSOR_COUNT"] = "4"
             os.environ["KMP_AFFINITY"] = "disabled"
-            import tensorflow as tf  # pylint:disable=import-outside-toplevel
+            import tensorflow as tf  # noqa pylint:disable=import-outside-toplevel,unused-import
         except ImportError as err:
             if "DLL load failed while importing" in str(err):
                 msg = (
@@ -77,14 +78,19 @@ class ScriptExecutor():  # pylint:disable=too-few-public-methods
                     f"error: {str(err)}")
             self._handle_import_error(msg)
 
-        tf_ver = float(".".join(tf.__version__.split(".")[:2]))  # pylint:disable=no-member
-        if tf_ver < min_ver:
-            msg = ("The minimum supported Tensorflow is version {} but you have version {} "
-                   "installed. Please upgrade Tensorflow.".format(min_ver, tf_ver))
+        tf_ver = get_tf_version()
+        backend = get_backend()
+        if backend != "amd" and tf_ver < min_ver:
+            msg = (f"The minimum supported Tensorflow is version {min_ver} but you have version "
+                   f"{tf_ver} installed. Please upgrade Tensorflow.")
             self._handle_import_error(msg)
-        if tf_ver > max_ver:
-            msg = ("The maximum supported Tensorflow is version {} but you have version {} "
-                   "installed. Please downgrade Tensorflow.".format(max_ver, tf_ver))
+        if backend != "amd" and tf_ver > max_ver:
+            msg = (f"The maximum supported Tensorflow is version {max_ver} but you have version "
+                   f"{tf_ver} installed. Please downgrade Tensorflow.")
+            self._handle_import_error(msg)
+        if backend == "amd" and tf_ver != amd_ver:
+            msg = (f"The supported Tensorflow version for AMD cards is {amd_ver} but you have "
+                   "version {tf_ver} installed. Please install the correct version.")
             self._handle_import_error(msg)
         logger.debug("Installed Tensorflow Version: %s", tf_ver)
 
@@ -206,17 +212,16 @@ class ScriptExecutor():  # pylint:disable=too-few-public-methods
 
         Set Faceswap backend to CPU if all GPUs have been deselected.
 
-        Add the Keras import interception code.
-
         Parameters
         ----------
         arguments: :class:`argparse.Namespace`
             The command line arguments passed to Faceswap.
         """
-        if not hasattr(arguments, "exclude_gpus"):
+        if get_backend() == "cpu":
             # Cpu backends will not have this attribute
             logger.debug("Adding missing exclude gpus argument to namespace")
             setattr(arguments, "exclude_gpus", None)
+            return
 
         if arguments.exclude_gpus:
             if not all(idx.isdigit() for idx in arguments.exclude_gpus):
@@ -226,7 +231,7 @@ class ScriptExecutor():  # pylint:disable=too-few-public-methods
             arguments.exclude_gpus = [int(idx) for idx in arguments.exclude_gpus]
             set_exclude_devices(arguments.exclude_gpus)
 
-        if GPUStats().exclude_all_devices and get_backend() != "cpu":
+        if GPUStats().exclude_all_devices:
             msg = "Switching backend to CPU"
             if get_backend() == "amd":
                 msg += (". Using Tensorflow for CPU operations.")
@@ -234,16 +239,10 @@ class ScriptExecutor():  # pylint:disable=too-few-public-methods
             set_backend("cpu")
             logger.info(msg)
 
-        # Add Keras finder to the meta_path list as the first item
-        sys.meta_path.insert(0, KerasFinder())
-
         logger.debug("Executing: %s. PID: %s", self._command, os.getpid())
 
-        if get_backend() == "amd":
-            plaidml_found = self._setup_amd(arguments)
-            if not plaidml_found:
-                safe_shutdown(got_error=True)
-                sys.exit(1)
+        if get_backend() == "amd" and not self._setup_amd(arguments):
+            safe_shutdown(got_error=True)
 
     @classmethod
     def _setup_amd(cls, arguments):
@@ -260,7 +259,7 @@ class ScriptExecutor():  # pylint:disable=too-few-public-methods
         except ImportError:
             logger.error("PlaidML not found. Run `pip install plaidml-keras` for AMD support")
             return False
-        from lib.plaidml_tools import setup_plaidml  # pylint:disable=import-outside-toplevel
+        from lib.gpu_stats import setup_plaidml  # pylint:disable=import-outside-toplevel
         setup_plaidml(arguments.loglevel, arguments.exclude_gpus)
         logger.debug("setup up for PlaidML")
         return True

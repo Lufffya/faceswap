@@ -20,19 +20,28 @@
   - [Running faceswap](#running-faceswap)
   - [Create a desktop shortcut](#create-a-desktop-shortcut)
   - [Updating faceswap](#updating-faceswap)
+- [macOS (Apple Silicon) Install Guide](#macos-apple-silicon-install-guide)
+  - [Prerequisites](#prerequisites-2)
+    - [OS](#os)
+    - [XCode Tools](#xcode-tools)
+    - [XQuartz](#xquartz)
+    - [Conda](#conda)
+  - [Setup](#setup-1)
+    - [faceswap](#faceswap-1)
+      - [Easy install](#easy-install-1)
 - [General Install Guide](#general-install-guide)
   - [Installing dependencies](#installing-dependencies)
     - [Git](#git-1)
     - [Python](#python)
     - [Virtual Environment](#virtual-environment)
   - [Getting the faceswap code](#getting-the-faceswap-code)
-  - [Setup](#setup-1)
+  - [Setup](#setup-2)
     - [About some of the options](#about-some-of-the-options)
   - [Run the project](#run-the-project)
   - [Notes](#notes)
 
 # Prerequisites
-Machine learning essentially involves a ton of trial and error. You're letting a program try millions of different settings to land on an algorithm that sort of does what you want it to do. This process is really really slow unless you have the hardware required to speed this up. 
+Machine learning essentially involves a ton of trial and error. You're letting a program try millions of different settings to land on an algorithm that sort of does what you want it to do. This process is really really slow unless you have the hardware required to speed this up.
 
 The type of computations that the process does are well suited for graphics cards, rather than regular processors. **It is pretty much required that you run the training process on a desktop or server capable GPU.** Running this on your CPU means it can take weeks to train your model, compared to several hours on a GPU.
 
@@ -52,15 +61,16 @@ The type of computations that the process does are well suited for graphics card
 - **Windows 10**
   Windows 7 and 8 might work. Your mileage may vary. Windows has an installer which will set up everything you need. See: https://github.com/deepfakes/faceswap/releases
 - **Linux**
-  Most Ubuntu/Debian or CentOS based Linux distributions will work.
+  Most Ubuntu/Debian or CentOS based Linux distributions will work. There is a Linux install script that will install and set up everything you need. See: https://github.com/deepfakes/faceswap/releases
 - **macOS**
-  GPU support on macOS is limited due to lack of drivers/libraries from Nvidia.
+  Experimental support for GPU-accelerated, native Apple Silicon processing (e.g. Apple M1 chips). Installation instructions can be found [further down this page](#macos-apple-silicon-install-guide).
+  Intel based macOS systems should work, but you will need to follow the [Manual Install](#manual-install) instructions.
 - All operating systems must be 64-bit for Tensorflow to run.
 
 Alternatively, there is a docker image that is based on Debian.
 
 # Important before you proceed
-**In its current iteration, the project relies heavily on the use of the command line, although a gui is available. if you are unfamiliar with command line tools, you may have difficulty setting up the environment and should perhaps not attempt any of the steps described in this guide.** This guide assumes you have intermediate knowledge of the command line. 
+**In its current iteration, the project relies heavily on the use of the command line, although a gui is available. if you are unfamiliar with command line tools, you may have difficulty setting up the environment and should perhaps not attempt any of the steps described in this guide.** This guide assumes you have intermediate knowledge of the command line.
 
 The developers are also not responsible for any damage you might cause to your own computer.
 
@@ -118,9 +128,9 @@ Do not follow these steps if the Easy Install above completed succesfully.
 If you are using an Nvidia card make sure you have the correct versions of Cuda/cuDNN installed for the required version of Tensorflow
 - Install tkinter (required for the GUI) by typing: `conda install tk`
 - Install requirements:
-  - For Nvidia GPU users: `pip install -r requirements_nvidia.txt`
-  - For AMD GPU users: `pip install -r requirements_amd.txt`
-  - For CPU users: `pip install -r requirements_cpu.txt`
+  - For Nvidia GPU users: `pip install -r ./requirements/requirements_nvidia.txt`
+  - For AMD GPU users: `pip install -r ./requirements/requirements_amd.txt`
+  - For CPU users: `pip install -r ./requirements/requirements_cpu.txt`
 
 ## Running faceswap
 - If you are not already in your virtual environment follow [these steps](#entering-your-virtual-environment)
@@ -145,6 +155,42 @@ It's good to keep faceswap up to date as new features are added and bugs are fix
 - Enter the following `git pull --all`
 - Once the latest version has downloaded, make sure your dependencies are up to date. There is a script to help with this: `python update_deps.py`
 
+# macOS (Apple Silicon) Install Guide
+
+## Prerequisites
+
+### OS
+macOS 12.0+
+
+### XCode Tools
+`xcode-select --install`
+
+### XQuartz
+Download and install from: https://www.xquartz.org/
+
+### Conda
+Download and install the latest Conda env from: https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-arm64.sh
+```sh
+$ chmod +x ~/Downloads/Miniforge3-MacOSX-arm64.sh
+$ sh ~/Downloads/Miniforge3-MacOSX-arm64.sh
+$ source ~/miniforge3/bin/activate
+```
+## Setup
+
+### faceswap
+- Get the faceswap repo by typing: `git clone --depth 1 https://github.com/deepfakes/faceswap.git`
+- Enter the faceswap folder: `cd faceswap`
+
+#### Easy install
+```sh
+$ conda deactivate
+$ conda env create -f ./requirements/conda-environment-apple-silicon.yml
+$ conda activate faceswap
+```
+- Enter the command `python faceswap.py gui` and follow the prompts:
+- Choose '4' for Apple Silicon
+- If you have issues/errors follow the Manual install steps below.
+
 # General Install Guide
 ## Installing dependencies
 ### Git
@@ -154,8 +200,8 @@ Obtain git for your distribution from the [git website](https://git-scm.com/down
 ### Python
 The recommended install method is to use a Conda3 Environment as this will handle the installation of Nvidia's CUDA and cuDNN straight into your Conda Environment. This is by far the easiest and most reliable way to setup the project.
   - MiniConda3 is recommended: [MiniConda3](https://docs.conda.io/en/latest/miniconda.html)
-  
-Alternatively you can install Python (>= 3.7-3.8 64-bit) for your distribution (links below.) If you go down this route and are using an Nvidia GPU you should install CUDA (https://developer.nvidia.com/cuda-zone) and cuDNN (https://developer.nvidia.com/cudnn). for your system. If you do not plan to build Tensorflow yourself, make sure you install the correct Cuda and cuDNN package for the currently installed version of Tensorflow (Current release: Tensorflow 2.2. Release v1.0: Tensorflow 1.15). You can check for the compatible versions here: (https://www.tensorflow.org/install/source#gpu).
+
+Alternatively you can install Python (>= 3.7-3.9 64-bit) for your distribution (links below.) If you go down this route and are using an Nvidia GPU you should install CUDA (https://developer.nvidia.com/cuda-zone) and cuDNN (https://developer.nvidia.com/cudnn). for your system. If you do not plan to build Tensorflow yourself, make sure you install the correct Cuda and cuDNN package for the currently installed version of Tensorflow (Current release: Tensorflow 2.8. Release v1.0: Tensorflow 1.15). You can check for the compatible versions here: (https://www.tensorflow.org/install/source#gpu).
   - Python distributions:
     - apt/yum install python3 (Linux)
     - [Installer](https://www.python.org/downloads/release/python-368/) (Windows)
@@ -181,7 +227,7 @@ Enter your virtual environment and then enter the folder that faceswap has been 
 ```bash
 python setup.py
 ```
-If setup fails for any reason you can still manually install the packages listed within requirements.txt
+If setup fails for any reason you can still manually install the packages listed within the files in the requirements folder.
 
 ### About some of the options
    - CUDA: For acceleration. Requires a good nVidia Graphics Card (which supports CUDA inside)
@@ -195,32 +241,32 @@ INFO    The tool provides tips for installation
 INFO    Setup in Linux 4.14.39-1-MANJARO
 INFO    Installed Python: 3.7.5 64bit
 INFO    Installed PIP: 10.0.1
-Enable  Docker? [Y/n] 
+Enable  Docker? [Y/n]
 INFO    Docker Enabled
-Enable  CUDA? [Y/n] 
+Enable  CUDA? [Y/n]
 INFO    CUDA Enabled
 INFO    1. Install Docker
         https://www.docker.com/community-edition
-        
+
         1. Install Nvidia-Docker & Restart Docker Service
         https://github.com/NVIDIA/nvidia-docker
-        
+
         1. Build Docker Image For faceswap
         docker build -t deepfakes-gpu -f Dockerfile.gpu .
-        
+
         1. Mount faceswap volume and Run it
         # without gui. tools.py gui not working.
         nvidia-docker run --rm -it -p 8888:8888 \
             --hostname faceswap-gpu --name faceswap-gpu \
             -v /opt/faceswap:/srv \
             deepfakes-gpu
-        
+
         # with gui. tools.py gui working.
         ## enable local access to X11 server
         xhost +local:
         ## enable nvidia device if working under bumblebee
         echo ON > /proc/acpi/bbswitch
-        ## create container 
+        ## create container
         nvidia-docker run -p 8888:8888 \
             --hostname faceswap-gpu --name faceswap-gpu \
             -v /opt/faceswap:/srv \
@@ -231,7 +277,7 @@ INFO    1. Install Docker
             -e GID=`id -g` \
             -e UID=`id -u` \
             deepfakes-gpu
-        
+
         1. Open a new terminal to interact with the project
         docker exec -it deepfakes-gpu /bin/bash
 	# Launch deepfakes gui (Answer 3 for NVIDIA at the prompt)
@@ -247,7 +293,7 @@ INFO    Installed Python: 3.7.5 64bit
 INFO    Installed PIP: 10.0.1
 Enable  Docker? [Y/n] n
 INFO    Docker Disabled
-Enable  CUDA? [Y/n] 
+Enable  CUDA? [Y/n]
 INFO    CUDA Enabled
 INFO    CUDA version: 9.1
 INFO    cuDNN version: 7
@@ -280,6 +326,6 @@ python faceswap.py gui
 Proceed to [../blob/master/USAGE.md](USAGE.md)
 
 ## Notes
-This guide is far from complete. Functionality may change over time, and new dependencies are added and removed as time goes on. 
+This guide is far from complete. Functionality may change over time, and new dependencies are added and removed as time goes on.
 
 If you are experiencing issues, please raise them in the [faceswap Forum](https://faceswap.dev/forum) instead of the main repo. Usage questions raised in the issues within this repo are liable to be closed without response.

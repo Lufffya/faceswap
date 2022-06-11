@@ -22,7 +22,7 @@ InstallDir $PROFILE\faceswap
 # Install cli flags
 !define flagsConda "/S /RegisterPython=0 /AddToPath=0 /D=$PROFILE\MiniConda3"
 !define flagsRepo "--depth 1 --no-single-branch ${wwwRepo}"
-!define flagsEnv "-y python=3.8"
+!define flagsEnv "-y python=3."
 
 # Folders
 Var ProgramData
@@ -370,6 +370,7 @@ Function SetEnvironment
 
     IfFileExists  "$dirConda\envs\$envName" DeleteEnv CreateEnv
         DeleteEnv:
+            DetailPrint "Removing existing Conda Virtual Environment..."
             SetDetailsPrint listonly
             ExecDos::exec /NOUNLOAD /ASYNC /DETAILED "$\"$dirConda\scripts\activate.bat$\" && conda env remove -y -n $\"$envName$\" && conda deactivate"
             pop $0
@@ -381,9 +382,27 @@ Function SetEnvironment
                 Call Abort
             ${EndIf}
 
+        # Often Conda won't actually remove the folder and some of it's contents which leads to permission problems later
+        IfFileExists  "$dirConda\envs\$envName" DeleteFolder CreateEnv
+            DeleteFolder:
+                DetailPrint "Deleting stale Conda Virtual Environment files..."
+                SetDetailsPrint listonly
+                RMDir /r "$dirConda\envs\$envName"
+                pop $0
+                SetDetailsPrint both
+                ${If} $0 != 0
+                    DetailPrint "Error deleting Conda Virtual Environment Folder"
+                    Call Abort
+                ${EndIf}
+
     CreateEnv:
         SetDetailsPrint listonly
-        ExecDos::exec /NOUNLOAD /ASYNC /DETAILED "$\"$dirConda\scripts\activate.bat$\" && conda create ${flagsEnv} -n  $\"$envName$\" && conda deactivate"
+        ${If} $setupType == "amd"
+            StrCpy $0 "${flagsEnv}8"
+        ${else}
+            StrCpy $0 "${flagsEnv}9"
+        ${EndIf}        
+        ExecDos::exec /NOUNLOAD /ASYNC /DETAILED "$\"$dirConda\scripts\activate.bat$\" && conda create $0 -n  $\"$envName$\" && conda deactivate"
         pop $0
         ExecDos::wait $0
         pop $0

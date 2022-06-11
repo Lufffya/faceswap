@@ -12,6 +12,7 @@ DIR_CONDA="$HOME/miniconda3"
 CONDA_EXECUTABLE="${DIR_CONDA}/bin/conda"
 CONDA_TO_PATH=false
 ENV_NAME="faceswap"
+PYENV_VERSION="3.9"
 
 DIR_FACESWAP="$HOME/faceswap"
 VERSION="nvidia"
@@ -130,7 +131,7 @@ ask_version() {
         vers="${vers:-${default}}"
         case $vers in
             1) VERSION="nvidia" ; break ;;
-            2) VERSION="amd" ; break ;;
+            2) VERSION="amd" ; PYENV_VERSION="3.8" ; break ;;
             3) VERSION="cpu" ; break ;;
             * ) echo "Invalid selection." ;;
         esac
@@ -348,7 +349,7 @@ create_env() {
     # Create Python 3.8 env for faceswap
     delete_env
     info "Creating Conda Virtual Environment..."
-    yellow ; "$CONDA_EXECUTABLE" create -n "$ENV_NAME" -q python=3.8 -y
+    yellow ; "$CONDA_EXECUTABLE" create -n "$ENV_NAME" -q python="$PYENV_VERSION" -y
 }
 
 
