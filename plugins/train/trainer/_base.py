@@ -78,9 +78,7 @@ class TrainerBase():
         self._feeder = _Feeder(images, self._model, batch_size, self._config)
 
         self._tensorboard = self._set_tensorboard()
-        self._samples = _Samples(self._model,
-                                 self._model.coverage_ratio,
-                                 self._model.command_line_arguments.preview_scale / 100)
+        self._samples = _Samples(self._model, self._model.coverage_ratio)
         self._timelapse = _Timelapse(self._model,
                                      self._model.coverage_ratio,
                                      self._config.get("preview_images", 14),
@@ -183,7 +181,6 @@ class TrainerBase():
         self._model.state.increment_iterations()
         logger.trace("Training one step: (iteration: %s)", self._model.iterations)
         do_preview = viewer is not None
-        do_timelapse = timelapse_kwargs is not None
         snapshot_interval = self._model.command_line_arguments.snapshot_interval
         do_snapshot = (snapshot_interval != 0 and
                        self._model.iterations - 1 >= snapshot_interval and
@@ -233,10 +230,10 @@ class TrainerBase():
             samples = self._samples.show_sample()
             if samples is not None:
                 viewer(samples,
-                       "Training - 'S': Save Now. 'R': Refresh Preview. 'M': Toggle Mask. "
-                       "'ENTER': Save and Quit")
+                       "Training - 'S': Save Now. 'R': Refresh Preview. 'M': Toggle Mask. 'F': "
+                       "Toggle Screen Fit-Actual Size. 'ENTER': Save and Quit")
 
-        if do_timelapse:
+        if timelapse_kwargs:
             self._timelapse.output_timelapse(timelapse_kwargs)
 
     def _log_tensorboard(self, loss):
@@ -253,15 +250,17 @@ class TrainerBase():
         logs = {log[0]: log[1]
                 for log in zip(self._model.state.loss_names, loss)}
 
-        self._tensorboard.on_train_batch_end(self._model.iterations, logs=logs)
-        if get_tf_version() == 2.8:
-            # Bug in TF 2.8 where batch recording got deleted.
+        if get_tf_version() > 2.7:
+            # Bug in TF 2.8/2.9 where batch recording got deleted.
             # ref: https://github.com/keras-team/keras/issues/16173
-            for name, value in logs.items():
-                tf.summary.scalar(
-                    "batch_" + name,
-                    value,
-                    step=self._model._model._train_counter)  # pylint:disable=protected-access
+            with tf.summary.record_if(True), self._tensorboard._train_writer.as_default():  # noqa pylint:disable=protected-access,not-context-manager
+                for name, value in logs.items():
+                    tf.summary.scalar(
+                        "batch_" + name,
+                        value,
+                        step=self._tensorboard._train_step)  # pylint:disable=protected-access
+        else:
+            self._tensorboard.on_train_batch_end(self._model.iterations, logs=logs)
 
     def _collate_and_store_loss(self, loss):
         """ Collate the loss into totals for each side.
@@ -311,7 +310,11 @@ class TrainerBase():
                             for side, side_loss in zip(("A", "B"), loss)])
         timestamp = time.strftime("%H:%M:%S")
         output = f"[{timestamp}] [#{self._model.iterations:05d}] {output}"
-        print(f"\r{output}", end="")
+        try:
+            print(f"\r{output}", end="")
+        except OSError as err:
+            logger.warning("Swallowed OS Error caused by Tensorflow distributed training. output "
+                           "line: %s, error: %s", output, str(err))
 
     def clear_tensorboard(self):
         """ Stop Tensorboard logging.
@@ -602,8 +605,6 @@ class _Samples():  # pylint:disable=too-few-public-methods
         The selected model that will be running this trainer
     coverage_ratio: float
         Ratio of face to be cropped out of the training image.
-    scaling: float, optional
-        The amount to scale the final preview image by. Default: `1.0`
 
     Attributes
     ----------
@@ -612,14 +613,13 @@ class _Samples():  # pylint:disable=too-few-public-methods
         dictionary should contain 2 keys ("a" and "b") with the values being the training images
         for generating samples corresponding to each side.
     """
-    def __init__(self, model, coverage_ratio, scaling=1.0):
+    def __init__(self, model, coverage_ratio):
         logger.debug("Initializing %s: model: '%s', coverage_ratio: %s)",
                      self.__class__.__name__, model, coverage_ratio)
         self._model = model
         self._display_mask = model.config["learn_mask"] or model.config["penalized_mask_loss"]
         self.images = {}
         self._coverage_ratio = coverage_ratio
-        self._scaling = scaling
         logger.debug("Initialized %s", self.__class__.__name__)
 
     def toggle_mask_display(self):
@@ -727,8 +727,8 @@ class _Samples():  # pylint:disable=too-few-public-methods
         """
         logger.debug("Getting Predictions")
         preds = {}
-        standard = self._model.model.predict([feed_a, feed_b])
-        swapped = self._model.model.predict([feed_b, feed_a])
+        standard = self._model.model.predict([feed_a, feed_b], verbose=0)
+        swapped = self._model.model.predict([feed_b, feed_a], verbose=0)
 
         if self._model.config["learn_mask"] and get_backend() == "amd":
             # Ravel results for plaidml
@@ -784,9 +784,6 @@ class _Samples():  # pylint:disable=too-few-public-methods
             images = self._compile_masked(images, samples[-1])
         images = [self._overlay_foreground(full.copy(), image) for image in images]
 
-        if self._scaling != 1.0:
-            new_size = int(images[0].shape[1] * self._scaling)
-            images = [self._resize_sample(side, image, new_size) for image in images]
         return images
 
     def _process_full(self, side, images, prediction_size, color):

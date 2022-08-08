@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """ Plugin to blend the edges of the face between the swap and the original face. """
 import logging
-from typing import List, Literal, Optional, Tuple
+import sys
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -9,6 +10,12 @@ import numpy as np
 from lib.align import BlurMask, DetectedFace
 from lib.config import FaceswapConfig
 from plugins.convert._config import Config
+
+if sys.version_info < (3, 8):
+    from typing_extensions import Literal
+else:
+    from typing import Literal
+
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +109,7 @@ class Mask():  # pylint:disable=too-few-public-methods
             The box mask
         """
         box = np.zeros((output_size, output_size, 1), dtype="float32")
-        edge = output_size // 32
+        edge = (output_size // 32) + 1
         box[edge:-edge, edge:-edge] = 1.0
 
         if self._config["type"] is not None:
@@ -146,12 +153,12 @@ class Mask():  # pylint:disable=too-few-public-methods
 
         if self._mask_type != "none":
 
-            mask = self._erode(mask) if self._do_erode else mask
-            mask *= self._box
+            out = self._erode(mask) if self._do_erode else mask
+            out = np.minimum(out, self._box)
 
         logger.trace(  # type: ignore
             "mask shape: %s, raw_mask shape: %s", mask.shape, raw_mask.shape)
-        return mask, raw_mask
+        return out, raw_mask
 
     def _get_mask(self,
                   detected_face: DetectedFace,
@@ -289,7 +296,7 @@ class Mask():  # pylint:disable=too-few-public-methods
         kernels = self._get_erosion_kernels(mask)
         if not any(k.any() for k in kernels):
             return mask  # No kernels could be created from selected input res
-        eroded = []
+        eroded = mask
         for idx, (kernel, ratio) in enumerate(zip(kernels, self._erodes)):
             if not kernel.any():
                 continue
@@ -303,10 +310,9 @@ class Mask():  # pylint:disable=too-few-public-methods
                 anchor[pos] = val
 
             func = cv2.erode if ratio > 0 else cv2.dilate
-            eroded.append(func(mask, kernel, iterations=1, anchor=anchor))
+            eroded = func(eroded, kernel, iterations=1, anchor=anchor)
 
-        mask = np.min(np.array(eroded), axis=0) if len(eroded) > 1 else eroded[0]
-        return mask[..., None]
+        return eroded[..., None]
 
     def _get_erosion_kernels(self, mask: np.ndarray) -> List[np.ndarray]:
         """ Get the erosion kernels for each of the center, left, top right and bottom erosions.

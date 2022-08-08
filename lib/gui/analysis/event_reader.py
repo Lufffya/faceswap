@@ -321,13 +321,19 @@ class _Cache():
         cache = self._data[session_id]
         for metric in ("loss", "timestamps"):
             data = locals()[metric]
-            old_shape = cache[f"{metric}_shape"]
             dtype = "float32" if metric == "loss" else "float64"
-            old = np.frombuffer(zlib.decompress(cache[metric]), dtype=dtype).reshape(old_shape)
+
+            old = np.frombuffer(zlib.decompress(cache[metric]), dtype=dtype)
+            if data.ndim > 1:
+                old = old.reshape(-1, *data.shape[1:])
+
             new = np.concatenate((old, data))
-            logger.debug("'%s' old_shape: %s new_shape: %s", metric, old_shape, new.shape)
+
+            logger.debug("'%s' old_shape: %s new_shape: %s",
+                         metric, cache[f"{metric}_shape"], new.shape)
             cache[f"{metric}_shape"] = new.shape
             cache[metric] = zlib.compress(new)
+
             del old
 
     def get_data(self, session_id, metric):
@@ -359,8 +365,11 @@ class _Cache():
 
         retval = {}
         for idx, data in raw.items():
-            val = {metric: np.frombuffer(zlib.decompress(data[metric]),
-                                         dtype=dtype).reshape(data[f"{metric}_shape"])}
+            buff = np.frombuffer(zlib.decompress(data[metric]), dtype=dtype)
+            shape = data[f"{metric}_shape"]
+            if len(shape) > 1:
+                buff = buff.reshape(-1, *shape[1:])
+            val = {metric: buff}
             if metric == "loss":
                 val["labels"] = data["labels"]
             retval[idx] = val
@@ -725,7 +734,7 @@ class _EventParser():  # pylint:disable=too-few-public-methods
         if not loss:
             # Need to convert a tensor to a float for TF2.8 logged data. This maybe due to change
             # in logging or may be due to work around put in place in FS training function for the
-            # following bug in TF 2.8 when writing records:
+            # following bug in TF 2.8/2.9 when writing records:
             #  https://github.com/keras-team/keras/issues/16173
             loss = float(tf.make_ndarray(summary.tensor))
 

@@ -7,10 +7,10 @@ import pynvml
 
 from lib.utils import FaceswapError
 
-from ._base import GPUStats
+from ._base import _GPUStats
 
 
-class NvidiaStats(GPUStats):
+class NvidiaStats(_GPUStats):
     """ Holds information and statistics about Nvidia GPU(s) available on the currently
     running system.
 
@@ -105,7 +105,7 @@ class NvidiaStats(GPUStats):
             The current GPU driver version
         """
         try:
-            driver = pynvml.nvmlSystemGetDriverVersion().decode("utf-8")
+            driver = pynvml.nvmlSystemGetDriverVersion()
         except pynvml.NVMLError as err:
             self._log("debug", f"Unable to obtain driver. Original error: {str(err)}")
             driver = "No Nvidia driver found"
@@ -120,12 +120,12 @@ class NvidiaStats(GPUStats):
         list
             The list of connected Nvidia GPU names
         """
-        names = [pynvml.nvmlDeviceGetName(handle).decode("utf-8")
+        names = [pynvml.nvmlDeviceGetName(handle)
                  for handle in self._handles]
         self._log("debug", f"GPU Devices: {names}")
         return names
 
-    def _get_vram(self) -> List[float]:
+    def _get_vram(self) -> List[int]:
         """ Obtain the VRAM in Megabytes for each connected Nvidia GPU as identified in
         :attr:`_handles`.
 
@@ -139,7 +139,7 @@ class NvidiaStats(GPUStats):
         self._log("debug", f"GPU VRAM: {vram}")
         return vram
 
-    def _get_free_vram(self) -> List[float]:
+    def _get_free_vram(self) -> List[int]:
         """ Obtain the amount of VRAM that is available, in Megabytes, for each connected Nvidia
         GPU.
 

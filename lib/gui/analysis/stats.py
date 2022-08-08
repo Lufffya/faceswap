@@ -34,8 +34,8 @@ class GlobalSession():
     def __init__(self) -> None:
         logger.debug("Initializing %s", self.__class__.__name__)
         self._state = None
-        self._model_dir = None
-        self._model_name = None
+        self._model_dir = ""
+        self._model_name = ""
 
         self._tb_logs = None
         self._summary = None
@@ -48,7 +48,7 @@ class GlobalSession():
     @property
     def is_loaded(self) -> bool:
         """ bool: ``True`` if session data is loaded otherwise ``False`` """
-        return self._model_dir is not None
+        return bool(self._model_dir)
 
     @property
     def is_training(self) -> bool:
@@ -146,8 +146,8 @@ class GlobalSession():
     def clear(self) -> None:
         """ Clear the currently loaded session. """
         self._state = {}
-        self._model_dir = None
-        self._model_name = None
+        self._model_dir = ""
+        self._model_name = ""
 
         del self._tb_logs
         self._tb_logs = None
@@ -367,12 +367,14 @@ class SessionsSummary():  # pylint:disable=too-few-public-methods
 
             stats = self._per_session_stats[-1]
 
-            stats["start"] = ts_data["start_time"]
-            stats["end"] = ts_data["end_time"]
-            stats["elapsed"] = int(stats["end"] - stats["start"])
+            start = np.nan_to_num(ts_data["start_time"])
+            end = np.nan_to_num(ts_data["end_time"])
+            stats["start"] = start
+            stats["end"] = end
+            stats["elapsed"] = int(end - start)
             stats["iterations"] = ts_data["iterations"]
             stats["rate"] = (((stats["batch"] * 2) * stats["iterations"])
-                             / stats["elapsed"] if stats["elapsed"] != 0 else 0)
+                             / stats["elapsed"] if stats["elapsed"] > 0 else 0)
         logger.debug("per_session_stats: %s", self._per_session_stats)
 
     def _collate_stats(self, session_id: int) -> dict:
@@ -389,12 +391,14 @@ class SessionsSummary():  # pylint:disable=too-few-public-methods
             The collated session summary statistics
         """
         timestamps = self._time_stats[session_id]
-        elapsed = int(timestamps["end_time"] - timestamps["start_time"])
+        start = np.nan_to_num(timestamps["start_time"])
+        end = np.nan_to_num(timestamps["end_time"])
+        elapsed = int(end - start)
         batchsize = self._session.batch_sizes.get(session_id, 0)
         retval = dict(
             session=session_id,
-            start=timestamps["start_time"],
-            end=timestamps["end_time"],
+            start=start,
+            end=end,
             elapsed=elapsed,
             rate=(((batchsize * 2) * timestamps["iterations"]) / elapsed if elapsed != 0 else 0),
             batch=batchsize,

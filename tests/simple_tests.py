@@ -14,6 +14,7 @@ from urllib.request import urlretrieve
 import os
 from os.path import join as pathjoin, expanduser
 
+_TRAIN_ARGS = (1, 1) if os.environ.get("FACESWAP_BACKEND", "cpu").lower() == "amd" else (4, 4)
 FAIL_COUNT = 0
 TEST_COUNT = 0
 _COLORS = {
@@ -24,16 +25,14 @@ _COLORS = {
     "ENDC": "\033[0m"
 }
 
-
 def print_colored(text, color="OK", bold=False):
     """ Print colored text
     This might not work on windows,
     although travis runs windows stuff in git bash, so it might ?
     """
     color = _COLORS.get(color, color)
-    print("%s%s%s%s" % (
-        color, "" if not bold else _COLORS["BOLD"], text, _COLORS["ENDC"]
-    ))
+    fmt = '' if not bold else _COLORS['BOLD']
+    print(f"{color}{fmt}{text}{_COLORS['ENDC']}")
 
 
 def print_ok(text):
@@ -54,15 +53,15 @@ def print_status(text):
 def run_test(name, cmd):
     """ run a test """
     global FAIL_COUNT, TEST_COUNT  # pylint:disable=global-statement
-    print_status("[?] running %s" % name)
-    print("Cmd: %s" % " ".join(cmd))
+    print_status(f"[?] running {name}")
+    print(f"Cmd: {' '.join(cmd)}")
     TEST_COUNT += 1
     try:
         check_call(cmd)
         print_ok("[+] Test success")
         return True
     except CalledProcessError as err:
-        print_fail("[-] Test failed with %s" % err)
+        print_fail(f"[-] Test failed with {err}")
         FAIL_COUNT += 1
         return False
 
@@ -70,55 +69,76 @@ def run_test(name, cmd):
 def download_file(url, filename):  # TODO: retry
     """ Download a file from given url """
     if os.path.isfile(filename):
-        print_status("[?] '%s' already cached as '%s'" % (url, filename))
+        print_status(f"[?] '{url}' already cached as '{filename}'")
         return filename
     try:
-        print_status("[?] Downloading '%s' to '%s'" % (url, filename))
+        print_status(f"[?] Downloading '{url}' to '{filename}'")
         video, _ = urlretrieve(url, filename)
         return video
     except urllib.error.URLError as err:
-        print_fail("[-] Failed downloading: %s" % err)
+        print_fail(f"[-] Failed downloading: {err}")
         return None
 
 
 def extract_args(detector, aligner, in_path, out_path, args=None):
     """ Extraction command """
     py_exe = sys.executable
-    _extract_args = "%s faceswap.py extract -i %s -o %s -D %s -A %s" % (
-        py_exe, in_path, out_path, detector, aligner
-    )
+    _extract_args = (f"{py_exe} faceswap.py extract -i {in_path} -o {out_path} -D {detector} "
+                     f"-A {aligner}")
     if args:
-        _extract_args += " %s" % args
+        _extract_args += f" {args}"
     return _extract_args.split()
 
 
-def train_args(model, model_path, faces, alignments, iterations=5, batchsize=8, extra_args=""):
+def train_args(model, model_path, faces, iterations=1, batchsize=2, extra_args=""):
     """ Train command """
     py_exe = sys.executable
-    args = "%s faceswap.py train -A %s -B %s -m %s -t %s -bs %i -it %s %s" % (
-        py_exe, faces, faces, model_path, model, batchsize, iterations, extra_args
-    )
+    args = (f"{py_exe} faceswap.py train -A {faces} -B {faces} -m {model_path} -t {model} "
+            f"-bs {batchsize} -it {iterations} {extra_args}")
     return args.split()
 
 
 def convert_args(in_path, out_path, model_path, writer, args=None):
     """ Convert command """
     py_exe = sys.executable
-    conv_args = "%s faceswap.py convert -i %s -o %s -m %s -w %s" % (
-        py_exe, in_path, out_path, model_path, writer
-    )
+    conv_args = (f"{py_exe} faceswap.py convert -i {in_path} -o {out_path} -m {model_path} "
+                 f"-w {writer}")
     if args:
-        conv_args += " %s" % args
+        conv_args += f" {args}"
     return conv_args.split()  # Don't use pathes with spaces ;)
 
 
 def sort_args(in_path, out_path, sortby="face", groupby="hist", method="rename"):
     """ Sort command """
     py_exe = sys.executable
-    _sort_args = "%s tools.py sort -i %s -o %s -s %s -fp %s -g %s -k" % (
-        py_exe, in_path, out_path, sortby, method, groupby
-    )
+    _sort_args = (f"{py_exe} tools.py sort -i {in_path} -o {out_path} -s {sortby} -fp {method} "
+                  f"-g {groupby} -k")
     return _sort_args.split()
+
+
+def set_train_config(value):
+    """ Update the mixed_precision and autoclip values to given value
+
+    Parameters
+    ----------
+    value: bool
+        The value to set the config parameters to.
+    """
+    old_val, new_val = ("False", "True") if value else ("True", "False")
+    base_path = os.path.split(os.path.dirname(os.path.abspath(__file__)))[0]
+    train_ini = os.path.join(base_path, "config", "train.ini")
+    try:
+        cmd = ["sed", "-i", f"s/autoclip = {old_val}/autoclip = {new_val}/", train_ini]
+        check_call(cmd)
+        cmd = ["sed",
+               "-i",
+               f"s/mixed_precision = {old_val}/mixed_precision = {new_val}/",
+               train_ini]
+        check_call(cmd)
+        print_ok(f"Set autoclip and mixed_precision to `{new_val}`")
+    except CalledProcessError as err:
+        print_fail(f"[-] Test failed with {err}")
+        return False
 
 
 def main():
@@ -154,6 +174,12 @@ def main():
 
     if vid_extract:
         run_test(
+                "Generate configs and test help output",
+                (
+                    py_exe, "faceswap.py", "-h"
+                )
+        )
+        run_test(
             "Sort faces.",
             sort_args(
                 pathjoin(vid_base, "faces"), pathjoin(vid_base, "faces_sorted"),
@@ -169,23 +195,25 @@ def main():
                 "-fc", pathjoin(vid_base, "faces_sorted"),
             )
         )
-
+        set_train_config(True)
         run_test(
-            "Train lightweight model for 1 iteration with WTL.",
-            train_args(
-                "lightweight", pathjoin(vid_base, "model"),
-                pathjoin(vid_base, "faces"), pathjoin(vid_base, "test_alignments.fsa"),
-                iterations=1, extra_args="-wl"
-            )
-        )
+            "Train lightweight model for 1 iteration with WTL, AutoClip, MixedPrecion",
+            train_args("lightweight",
+                       pathjoin(vid_base, "model"),
+                       pathjoin(vid_base, "faces"),
+                       iterations=_TRAIN_ARGS[0],
+                       batchsize=_TRAIN_ARGS[1],
+                       extra_args="-wl"))
 
+        set_train_config(False)
         was_trained = run_test(
-            "Train lightweight model for 5 iterations WITHOUT WTL.",
-            train_args(
-                "lightweight", pathjoin(vid_base, "model"),
-                pathjoin(vid_base, "faces"), pathjoin(vid_base, "test_alignments.fsa")
-            )
-        )
+            "Train lightweight model for 1 iterations WITHOUT WTL, AutoClip, MixedPrecion",
+            train_args("lightweight",
+                       pathjoin(vid_base, "model"),
+                       pathjoin(vid_base, "faces"),
+                       iterations=_TRAIN_ARGS[0],
+                       batchsize=_TRAIN_ARGS[1],
+                       extra_args="-wl"))
 
     if was_trained:
         run_test(
@@ -205,10 +233,10 @@ def main():
         )
 
     if FAIL_COUNT == 0:
-        print_ok("[+] Failed %i/%i tests." % (FAIL_COUNT, TEST_COUNT))
+        print_ok(f"[+] Failed {FAIL_COUNT}/{TEST_COUNT} tests.")
         sys.exit(0)
     else:
-        print_fail("[-] Failed %i/%i tests." % (FAIL_COUNT, TEST_COUNT))
+        print_fail(f"[-] Failed {FAIL_COUNT}/{TEST_COUNT} tests.")
         sys.exit(1)
 
 

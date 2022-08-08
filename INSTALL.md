@@ -27,6 +27,7 @@
     - [XQuartz](#xquartz)
     - [Conda](#conda)
   - [Setup](#setup-1)
+    - [Create and Activate the Environment](#create-and-activate-the-environment)
     - [faceswap](#faceswap-1)
       - [Easy install](#easy-install-1)
 - [General Install Guide](#general-install-guide)
@@ -37,6 +38,12 @@
   - [Getting the faceswap code](#getting-the-faceswap-code)
   - [Setup](#setup-2)
     - [About some of the options](#about-some-of-the-options)
+- [Docker Install Guide](#docker-install-guide)
+  - [Docker General](#docker-general)
+    - [CUDA with Docker in 20 minutes.](#cuda-with-docker-in-20-minutes)
+  - [CUDA with Docker on Arch Linux](#cuda-with-docker-on-arch-linux)
+    - [Install docker](#install-docker)
+  - [A successful setup log, without docker.](#a-successful-setup-log-without-docker)
   - [Run the project](#run-the-project)
   - [Notes](#notes)
 
@@ -163,35 +170,48 @@ It's good to keep faceswap up to date as new features are added and bugs are fix
 macOS 12.0+
 
 ### XCode Tools
-`xcode-select --install`
+```sh
+xcode-select --install
+```
 
 ### XQuartz
-Download and install from: https://www.xquartz.org/
+Download and install from:
+- https://www.xquartz.org/
 
 ### Conda
-Download and install the latest Conda env from: https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-arm64.sh
+Download and install the latest Conda env from:
+- https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-MacOSX-arm64.sh
+
+Install Conda:
 ```sh
 $ chmod +x ~/Downloads/Miniforge3-MacOSX-arm64.sh
 $ sh ~/Downloads/Miniforge3-MacOSX-arm64.sh
 $ source ~/miniforge3/bin/activate
 ```
 ## Setup
+### Create and Activate the Environment
+```sh
+$ conda create --name faceswap python=3.9
+$ conda activate faceswap
+```
 
 ### faceswap
-- Get the faceswap repo by typing: `git clone --depth 1 https://github.com/deepfakes/faceswap.git`
-- Enter the faceswap folder: `cd faceswap`
+- Download the faceswap repo and enter the faceswap folder:
+```sh
+$ git clone --depth 1 https://github.com/deepfakes/faceswap.git
+$ cd faceswap
+```
 
 #### Easy install
 ```sh
-$ conda deactivate
-$ conda env create -f ./requirements/conda-environment-apple-silicon.yml
-$ conda activate faceswap
+$ python setup.py
 ```
-- Enter the command `python faceswap.py gui` and follow the prompts:
-- Choose '4' for Apple Silicon
+
 - If you have issues/errors follow the Manual install steps below.
 
+
 # General Install Guide
+
 ## Installing dependencies
 ### Git
 Git is required for obtaining the code and keeping your codebase up to date.
@@ -201,7 +221,7 @@ Obtain git for your distribution from the [git website](https://git-scm.com/down
 The recommended install method is to use a Conda3 Environment as this will handle the installation of Nvidia's CUDA and cuDNN straight into your Conda Environment. This is by far the easiest and most reliable way to setup the project.
   - MiniConda3 is recommended: [MiniConda3](https://docs.conda.io/en/latest/miniconda.html)
 
-Alternatively you can install Python (>= 3.7-3.9 64-bit) for your distribution (links below.) If you go down this route and are using an Nvidia GPU you should install CUDA (https://developer.nvidia.com/cuda-zone) and cuDNN (https://developer.nvidia.com/cudnn). for your system. If you do not plan to build Tensorflow yourself, make sure you install the correct Cuda and cuDNN package for the currently installed version of Tensorflow (Current release: Tensorflow 2.8. Release v1.0: Tensorflow 1.15). You can check for the compatible versions here: (https://www.tensorflow.org/install/source#gpu).
+Alternatively you can install Python (>= 3.7-3.9 64-bit) for your distribution (links below.) If you go down this route and are using an Nvidia GPU you should install CUDA (https://developer.nvidia.com/cuda-zone) and cuDNN (https://developer.nvidia.com/cudnn). for your system. If you do not plan to build Tensorflow yourself, make sure you install the correct Cuda and cuDNN package for the currently installed version of Tensorflow (Current release: Tensorflow 2.9. Release v1.0: Tensorflow 1.15). You can check for the compatible versions here: (https://www.tensorflow.org/install/source#gpu).
   - Python distributions:
     - apt/yum install python3 (Linux)
     - [Installer](https://www.python.org/downloads/release/python-368/) (Windows)
@@ -234,42 +254,97 @@ If setup fails for any reason you can still manually install the packages listed
    - Docker: Provide a ready-made image. Hide trivial details. Get you straight to the project.
    - nVidia-Docker: Access to the nVidia GPU on host machine from inside container.
 
-CUDA with Docker in 20 minutes.
+# Docker Install Guide
+
+## Docker General
+<details>
+  <summary>Click to expand!</summary>
+
+  ### CUDA with Docker in 20 minutes.
+  
+  1. Install Docker
+     https://www.docker.com/community-edition
+
+  2. Install Nvidia-Docker & Restart Docker Service
+     https://github.com/NVIDIA/nvidia-docker
+
+  3. Build Docker Image For faceswap
+  
+  ```bash
+  docker build -t deepfakes-gpu -f Dockerfile.gpu . 
+  ```
+
+  4. Mount faceswap volume and Run it
+    a). without `gui.tools.py` gui not working.
+
+ ```bash
+ nvidia-docker run --rm -it -p 8888:8888 \
+     --hostname faceswap-gpu --name faceswap-gpu \
+     -v /opt/faceswap:/srv \
+     deepfakes-gpu
+ ```
+
+    b). with gui. tools.py gui working.
+
+Enable local access to X11 server
+
+```bash
+xhost +local:
 ```
-INFO    The tool provides tips for installation
-        and installs required python packages
-INFO    Setup in Linux 4.14.39-1-MANJARO
-INFO    Installed Python: 3.7.5 64bit
-INFO    Installed PIP: 10.0.1
-Enable  Docker? [Y/n]
-INFO    Docker Enabled
-Enable  CUDA? [Y/n]
-INFO    CUDA Enabled
-INFO    1. Install Docker
-        https://www.docker.com/community-edition
 
-        1. Install Nvidia-Docker & Restart Docker Service
-        https://github.com/NVIDIA/nvidia-docker
+Enable nvidia device if working under bumblebee
 
-        1. Build Docker Image For faceswap
-        docker build -t deepfakes-gpu -f Dockerfile.gpu .
+```bash
+echo ON > /proc/acpi/bbswitch
+```
 
-        1. Mount faceswap volume and Run it
-        # without gui. tools.py gui not working.
-        nvidia-docker run --rm -it -p 8888:8888 \
+Create container
+```bash
+nvidia-docker run -p 8888:8888 \
+   --hostname faceswap-gpu --name faceswap-gpu \
+   -v /opt/faceswap:/srv \
+   -v /tmp/.X11-unix:/tmp/.X11-unix \
+   -e DISPLAY=unix$DISPLAY \
+   -e AUDIO_GID=`getent group audio | cut -d: -f3` \
+   -e VIDEO_GID=`getent group video | cut -d: -f3` \
+   -e GID=`id -g` \
+   -e UID=`id -u` \
+   deepfakes-gpu
+
+```
+
+Open a new terminal to interact with the project
+
+```bash
+docker exec -it deepfakes-gpu /bin/bash
+```
+
+Launch deepfakes gui (Answer 3 for NVIDIA at the prompt)
+
+```bash
+python3.8 /srv/faceswap.py gui
+```
+</details>
+
+## CUDA with Docker on Arch Linux
+
+<details>
+  <summary>Click to expand!</summary>
+
+### Install docker
+
+```bash
+sudo pacman -S docker
+```
+
+The steps are same but Arch linux doesn't use nvidia-docker
+
+create container
+
+```bash
+docker run -p 8888:8888 --gpus all --privileged -v /dev:/dev \  
             --hostname faceswap-gpu --name faceswap-gpu \
-            -v /opt/faceswap:/srv \
-            deepfakes-gpu
-
-        # with gui. tools.py gui working.
-        ## enable local access to X11 server
-        xhost +local:
-        ## enable nvidia device if working under bumblebee
-        echo ON > /proc/acpi/bbswitch
-        ## create container
-        nvidia-docker run -p 8888:8888 \
-            --hostname faceswap-gpu --name faceswap-gpu \
-            -v /opt/faceswap:/srv \
+            -v /mnt/hdd2/faceswap:/srv \
             -v /tmp/.X11-unix:/tmp/.X11-unix \
             -e DISPLAY=unix$DISPLAY \
             -e AUDIO_GID=`getent group audio | cut -d: -f3` \
@@ -277,14 +352,31 @@ INFO    1. Install Docker
             -e GID=`id -g` \
             -e UID=`id -u` \
             deepfakes-gpu
-
-        1. Open a new terminal to interact with the project
-        docker exec -it deepfakes-gpu /bin/bash
-	# Launch deepfakes gui (Answer 3 for NVIDIA at the prompt)
-	python3.8 /srv/faceswap.py gui
 ```
 
-A successful setup log, without docker.
+Open a new terminal to interact with the project
+
+```bash
+docker exec -it deepfakes-gpu /bin/bash
+```
+
+Launch deepfakes gui (Answer 3 for NVIDIA at the prompt)
+
+**With `gui.tools.py` gui working.**
+ Enable local access to X11 server
+
+ ```bash
+xhost +local:
+```
+ 
+ ```bash
+ python3.8 /srv/faceswap.py gui
+ ```
+
+</details>
+
+--- 
+## A successful setup log, without docker.
 ```
 INFO    The tool provides tips for installation
         and installs required python packages
