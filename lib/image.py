@@ -11,6 +11,7 @@ import sys
 from ast import literal_eval
 from bisect import bisect
 from concurrent import futures
+from typing import Optional, TYPE_CHECKING, Union
 from zlib import crc32
 
 import cv2
@@ -23,6 +24,9 @@ from lib.multithreading import MultiThread
 from lib.queue_manager import queue_manager, QueueEmpty
 from lib.utils import convert_to_secs, FaceswapError, _video_extensions, get_image_paths
 
+if TYPE_CHECKING:
+    from lib.align.alignments import PNGHeaderDict
+
 logger = logging.getLogger(__name__)  # pylint:disable=invalid-name
 
 # ################### #
@@ -32,7 +36,7 @@ logger = logging.getLogger(__name__)  # pylint:disable=invalid-name
 
 # <<< IMAGE IO >>> #
 
-class FfmpegReader(imageio.plugins.ffmpeg.FfmpegFormat.Reader):
+class FfmpegReader(imageio.plugins.ffmpeg.FfmpegFormat.Reader):  # type:ignore
     """ Monkey patch imageio ffmpeg to use keyframes whilst seeking """
     def __init__(self, format, request):
         super().__init__(format, request)
@@ -143,7 +147,7 @@ class FfmpegReader(imageio.plugins.ffmpeg.FfmpegFormat.Reader):
         logger.trace("keyframe pts_time: %s, keyframe: %s", prev_pts_time, prev_keyframe)
         return prev_pts_time, prev_keyframe
 
-    def _initialize(self, index=0):
+    def _initialize(self, index=0):  # noqa:C901
         """ Replace ImageIO _initialize with a version that explictly uses keyframes.
 
         Notes
@@ -250,7 +254,7 @@ class FfmpegReader(imageio.plugins.ffmpeg.FfmpegFormat.Reader):
             self._read_gen.__next__()  # we already have meta data
 
 
-imageio.plugins.ffmpeg.FfmpegFormat.Reader = FfmpegReader
+imageio.plugins.ffmpeg.FfmpegFormat.Reader = FfmpegReader  # type: ignore
 
 
 def read_image(filename, raise_error=False, with_metadata=False):
@@ -356,26 +360,20 @@ def read_image_batch(filenames, with_metadata=False):
     >>> images = read_image_batch(image_filenames)
     """
     logger.trace("Requested batch: '%s'", filenames)
-    executor = futures.ThreadPoolExecutor()
-    with executor:
+    batch = [None for _ in range(len(filenames))]
+    if with_metadata:
+        meta = [None for _ in range(len(filenames))]
+
+    with futures.ThreadPoolExecutor() as executor:
         images = {executor.submit(read_image, filename,
-                                  raise_error=True, with_metadata=with_metadata): filename
-                  for filename in filenames}
-        batch = [None for _ in range(len(filenames))]
-        if with_metadata:
-            meta = [None for _ in range(len(filenames))]
-        # There is no guarantee that the same filename will not be passed through multiple times
-        # (and when shuffle is true this can definitely happen), so we can't just call
-        # filenames.index().
-        return_indices = {filename: [idx for idx, fname in enumerate(filenames)
-                                     if fname == filename]
-                          for filename in set(filenames)}
+                                  raise_error=True, with_metadata=with_metadata): idx
+                  for idx, filename in enumerate(filenames)}
         for future in futures.as_completed(images):
-            return_idx = return_indices[images[future]].pop()
+            ret_idx = images[future]
             if with_metadata:
-                batch[return_idx], meta[return_idx] = future.result()
+                batch[ret_idx], meta[ret_idx] = future.result()
             else:
-                batch[return_idx] = future.result()
+                batch[ret_idx] = future.result()
 
     batch = np.array(batch)
     retval = (batch, meta) if with_metadata else batch
@@ -435,10 +433,11 @@ def read_image_meta(filename):
             elif field == b"iTXt":
                 keyword, value = infile.read(length).split(b"\0", 1)
                 if keyword == b"faceswap":
-                    retval["itxt"] = literal_eval(value[4:].decode("utf-8"))
+                    retval["itxt"] = literal_eval(value[4:].decode("utf-8", errors="replace"))
                     break
                 else:
-                    logger.trace("Skipping iTXt chunk: '%s'", keyword.decode("latin-1", "ignore"))
+                    logger.trace("Skipping iTXt chunk: '%s'", keyword.decode("latin-1",
+                                                                             errors="ignore"))
                     length = 0  # Reset marker for next chunk
             infile.seek(length + 4, 1)
     logger.trace("filename: %s, metadata: %s", filename, retval)
@@ -557,7 +556,9 @@ def update_existing_metadata(filename, metadata):
     os.replace(tmp_filename, filename)
 
 
-def encode_image(image, extension, metadata=None):
+def encode_image(image: np.ndarray,
+                 extension: str,
+                 metadata: Optional["PNGHeaderDict"] = None) -> bytes:
     """ Encode an image.
 
     Parameters
@@ -585,7 +586,7 @@ def encode_image(image, extension, metadata=None):
         raise ValueError("Metadata is only supported for .png images")
     retval = cv2.imencode(extension, image)[1]
     if metadata:
-        retval = np.frombuffer(png_write_meta(retval.tobytes(), metadata), dtype="uint8")
+        retval = png_write_meta(retval.tobytes(), metadata)
     return retval
 
 
@@ -645,9 +646,9 @@ def png_read_meta(png):
         pointer += 8
         keyword, value = png[pointer:pointer + length].split(b"\0", 1)
         if keyword == b"faceswap":
-            retval = literal_eval(value[4:].decode("utf-8"))
+            retval = literal_eval(value[4:].decode("utf-8", errors="ignore"))
             break
-        logger.trace("Skipping iTXt chunk: '%s'", keyword.decode("latin-1", "ignore"))
+        logger.trace("Skipping iTXt chunk: '%s'", keyword.decode("latin-1", errors="ignore"))
         pointer += length + 4
     return retval
 
@@ -894,9 +895,10 @@ class ImageIO():
 
     def _set_thread(self):
         """ Set the background thread for the load and save iterators and launch it. """
-        logger.debug("Setting thread")
+        logger.trace("Setting thread")  # type:ignore[attr-defined]
         if self._thread is not None and self._thread.is_alive():
-            logger.debug("Thread pre-exists and is alive: %s", self._thread)
+            logger.trace("Thread pre-exists and is alive: %s",  # type:ignore[attr-defined]
+                         self._thread)
             return
         self._thread = MultiThread(self._process,
                                    self._queue,
@@ -920,6 +922,7 @@ class ImageIO():
         logger.debug("Received Close")
         if self._thread is not None:
             self._thread.join()
+        del self._thread
         self._thread = None
         logger.debug("Closed")
 
@@ -1037,7 +1040,7 @@ class ImagesLoader(ImageIO):
             If the given location is a file and does not have a valid video extension.
 
         """
-        if os.path.isdir(self.location):
+        if not isinstance(self.location, str) or os.path.isdir(self.location):
             retval = False
         elif os.path.splitext(self.location)[1].lower() in _video_extensions:
             retval = True
@@ -1233,6 +1236,29 @@ class FacesLoader(ImagesLoader):
                      path, count)
         super().__init__(path, queue_size=8, skip_list=skip_list, count=count)
 
+    def _get_count_and_filelist(self, fast_count, count):
+        """ Override default implementation to only return png files from the source folder
+
+        Parameters
+        ----------
+        fast_count: bool
+            Not used for faces loader
+        count: int
+            The number of images that the loader will encounter if already known, otherwise
+            ``None``
+        """
+        if isinstance(self.location, (list, tuple)):
+            file_list = self.location
+        else:
+            file_list = get_image_paths(self.location)
+
+        self._file_list = [fname for fname in file_list
+                           if os.path.splitext(fname)[-1].lower() == ".png"]
+        self._count = len(self.file_list) if count is None else count
+
+        logger.debug("count: %s", self.count)
+        logger.trace("filelist: %s", self.file_list)
+
     def _from_folder(self):
         """ Generator for loading images from a folder
         Faces will only ever be loaded from a folder, so this is the only function requiring
@@ -1405,7 +1431,10 @@ class ImagesSaver(ImageIO):
             executor.submit(self._save, *item)
         executor.shutdown()
 
-    def _save(self, filename, image):
+    def _save(self,
+              filename: str,
+              image: Union[bytes, np.ndarray],
+              sub_folder: Optional[str]) -> None:
         """ Save a single image inside a ThreadPoolExecutor
 
         Parameters
@@ -1413,21 +1442,34 @@ class ImagesSaver(ImageIO):
         filename: str
             The filename of the image to be saved. NB: Any folders passed in with the filename
             will be stripped and replaced with :attr:`location`.
-        image: numpy.ndarray
-            The image to be saved
+        image: bytes or :class:`numpy.ndarray`
+            The encoded image or numpy array to be saved
+        subfolder: str or ``None``
+            If the file should be saved in a subfolder in the output location, the subfolder should
+            be provided here. ``None`` for no subfolder.
         """
-        filename = os.path.join(self.location, os.path.basename(filename))
+        location = os.path.join(self.location, sub_folder) if sub_folder else self._location
+        if sub_folder and not os.path.exists(location):
+            os.makedirs(location)
+
+        filename = os.path.join(location, os.path.basename(filename))
         try:
             if self._as_bytes:
+                assert isinstance(image, bytes)
                 with open(filename, "wb") as out_file:
                     out_file.write(image)
             else:
                 cv2.imwrite(filename, image)
-            logger.trace("Saved image: '%s'", filename)
+            logger.trace("Saved image: '%s'", filename)  # type:ignore
         except Exception as err:  # pylint: disable=broad-except
-            logger.error("Failed to save image '%s'. Original Error: %s", filename, err)
+            logger.error("Failed to save image '%s'. Original Error: %s", filename, str(err))
+        del image
+        del filename
 
-    def save(self, filename, image):
+    def save(self,
+             filename: str,
+             image: Union[bytes, np.ndarray],
+             sub_folder: Optional[str] = None) -> None:
         """ Save the given image in the background thread
 
         Ensure that :func:`close` is called once all save operations are complete.
@@ -1435,13 +1477,17 @@ class ImagesSaver(ImageIO):
         Parameters
         ----------
         filename: str
-            The filename of the image to be saved
-        image: numpy.ndarray
-            The image to be saved
+            The filename of the image to be saved. NB: Any folders passed in with the filename
+            will be stripped and replaced with :attr:`location`.
+        image: bytes
+            The encoded image to be saved
+        subfolder: str, optional
+            If the file should be saved in a subfolder in the output location, the subfolder should
+            be provided here. ``None`` for no subfolder. Default: ``None``
         """
         self._set_thread()
-        logger.trace("Putting to save queue: '%s'", filename)
-        self._queue.put((filename, image))
+        logger.trace("Putting to save queue: '%s'", filename)  # type:ignore
+        self._queue.put((filename, image, sub_folder))
 
     def close(self):
         """ Signal to the Save Threads that they should be closed and cleanly shutdown

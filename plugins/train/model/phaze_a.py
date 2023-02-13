@@ -27,7 +27,6 @@ else:
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
 
-
 if get_backend() == "amd":
     from keras import applications as kapp, backend as K
     from keras.layers import (
@@ -80,7 +79,7 @@ class _EncoderInfo:
     keras_name: str
     default_size: int
     no_amd: bool = False
-    tf_min: float = 2.0
+    tf_min: Tuple[int, int] = (2, 0)
     scaling: Tuple[int, int] = (0, 1)
     min_size: int = 32
     enforce_for_weights: bool = False
@@ -95,35 +94,50 @@ _MODEL_MAPPING: Dict[str, _EncoderInfo] = dict(
     densenet201=_EncoderInfo(
         keras_name="DenseNet201", default_size=224),
     efficientnet_b0=_EncoderInfo(
-        keras_name="EfficientNetB0", no_amd=True, tf_min=2.3, scaling=(0, 255), default_size=224),
+        keras_name="EfficientNetB0",
+        no_amd=True, tf_min=(2, 3), scaling=(0, 255), default_size=224),
     efficientnet_b1=_EncoderInfo(
-        keras_name="EfficientNetB1", no_amd=True, tf_min=2.3, scaling=(0, 255), default_size=240),
+        keras_name="EfficientNetB1",
+        no_amd=True, tf_min=(2, 3), scaling=(0, 255), default_size=240),
     efficientnet_b2=_EncoderInfo(
-        keras_name="EfficientNetB2", no_amd=True, tf_min=2.3, scaling=(0, 255), default_size=260),
+        keras_name="EfficientNetB2",
+        no_amd=True, tf_min=(2, 3), scaling=(0, 255), default_size=260),
     efficientnet_b3=_EncoderInfo(
-        keras_name="EfficientNetB3", no_amd=True, tf_min=2.3, scaling=(0, 255), default_size=300),
+        keras_name="EfficientNetB3",
+        no_amd=True, tf_min=(2, 3), scaling=(0, 255), default_size=300),
     efficientnet_b4=_EncoderInfo(
-        keras_name="EfficientNetB4", no_amd=True, tf_min=2.3, scaling=(0, 255), default_size=380),
+        keras_name="EfficientNetB4",
+        no_amd=True, tf_min=(2, 3), scaling=(0, 255), default_size=380),
     efficientnet_b5=_EncoderInfo(
-        keras_name="EfficientNetB5", no_amd=True, tf_min=2.3, scaling=(0, 255), default_size=456),
+        keras_name="EfficientNetB5",
+        no_amd=True, tf_min=(2, 3), scaling=(0, 255), default_size=456),
     efficientnet_b6=_EncoderInfo(
-        keras_name="EfficientNetB6", no_amd=True, tf_min=2.3, scaling=(0, 255), default_size=528),
+        keras_name="EfficientNetB6",
+        no_amd=True, tf_min=(2, 3), scaling=(0, 255), default_size=528),
     efficientnet_b7=_EncoderInfo(
-        keras_name="EfficientNetB7", no_amd=True, tf_min=2.3, scaling=(0, 255), default_size=600),
+        keras_name="EfficientNetB7",
+        no_amd=True, tf_min=(2, 3), scaling=(0, 255), default_size=600),
     efficientnet_v2_b0=_EncoderInfo(
-        keras_name="EfficientNetV2B0", no_amd=True, tf_min=2.8, scaling=(-1, 1), default_size=224),
+        keras_name="EfficientNetV2B0",
+        no_amd=True, tf_min=(2, 8), scaling=(-1, 1), default_size=224),
     efficientnet_v2_b1=_EncoderInfo(
-        keras_name="EfficientNetV2B1", no_amd=True, tf_min=2.8, scaling=(-1, 1), default_size=240),
+        keras_name="EfficientNetV2B1",
+        no_amd=True, tf_min=(2, 8), scaling=(-1, 1), default_size=240),
     efficientnet_v2_b2=_EncoderInfo(
-        keras_name="EfficientNetV2B2", no_amd=True, tf_min=2.8, scaling=(-1, 1), default_size=260),
+        keras_name="EfficientNetV2B2",
+        no_amd=True, tf_min=(2, 8), scaling=(-1, 1), default_size=260),
     efficientnet_v2_b3=_EncoderInfo(
-        keras_name="EfficientNetV2B3", no_amd=True, tf_min=2.8, scaling=(-1, 1), default_size=300),
+        keras_name="EfficientNetV2B3",
+        no_amd=True, tf_min=(2, 8), scaling=(-1, 1), default_size=300),
     efficientnet_v2_s=_EncoderInfo(
-        keras_name="EfficientNetV2S", no_amd=True, tf_min=2.8, scaling=(-1, 1), default_size=384),
+        keras_name="EfficientNetV2S",
+        no_amd=True, tf_min=(2, 8), scaling=(-1, 1), default_size=384),
     efficientnet_v2_m=_EncoderInfo(
-        keras_name="EfficientNetV2M", no_amd=True, tf_min=2.8, scaling=(-1, 1), default_size=480),
+        keras_name="EfficientNetV2M",
+        no_amd=True, tf_min=(2, 8), scaling=(-1, 1), default_size=480),
     efficientnet_v2_l=_EncoderInfo(
-        keras_name="EfficientNetV2L", no_amd=True, tf_min=2.8, scaling=(-1, 1), default_size=480),
+        keras_name="EfficientNetV2L",
+        no_amd=True, tf_min=(2, 8), scaling=(-1, 1), default_size=480),
     inception_resnet_v2=_EncoderInfo(
         keras_name="InceptionResNetV2", scaling=(-1, 1), min_size=75, default_size=299),
     inception_v3=_EncoderInfo(
@@ -133,9 +147,11 @@ _MODEL_MAPPING: Dict[str, _EncoderInfo] = dict(
     mobilenet_v2=_EncoderInfo(
         keras_name="MobileNetV2", scaling=(-1, 1), default_size=224),
     mobilenet_v3_large=_EncoderInfo(
-        keras_name="MobileNetV3Large", no_amd=True, tf_min=2.4, scaling=(-1, 1), default_size=224),
+        keras_name="MobileNetV3Large",
+        no_amd=True, tf_min=(2, 4), scaling=(-1, 1), default_size=224),
     mobilenet_v3_small=_EncoderInfo(
-        keras_name="MobileNetV3Small", no_amd=True, tf_min=2.4, scaling=(-1, 1), default_size=224),
+        keras_name="MobileNetV3Small",
+        no_amd=True, tf_min=(2, 4), scaling=(-1, 1), default_size=224),
     nasnet_large=_EncoderInfo(
         keras_name="NASNetLarge", scaling=(-1, 1), default_size=331, enforce_for_weights=True),
     nasnet_mobile=_EncoderInfo(
@@ -723,6 +739,7 @@ class Encoder():  # pylint:disable=too-few-public-methods
         var_x = input_
 
         scaling = self._selected_model[0].scaling
+
         if scaling:
             #  Some models expect different scaling.
             logger.debug("Scaling to %s for '%s'", scaling, self._config["enc_architecture"])
@@ -733,6 +750,19 @@ class Encoder():  # pylint:disable=too-few-public-methods
                 # models expecting inputs from -1 to 1.
                 var_x = var_x * 2.
                 var_x = var_x - 1.0
+
+        if (self._config["enc_architecture"].startswith("efficientnet_b")
+                and self._config["mixed_precision"]):
+            # There is a bug in EfficientNet pre-processing where the normalized mean for the
+            # imagenet rgb values are not cast to float16 when mixed precision is enabled.
+            # We monkeypatch in a cast constant until the issue is resolved
+            # TODO revert if/when applying Imagenet Normalization works with mixed precision
+            # confirmed bugged: TF2.10
+            logger.debug("Patching efficientnet.IMAGENET_STDDEV_RGB to float16 constant")
+            from keras.applications import efficientnet  # pylint:disable=import-outside-toplevel
+            setattr(efficientnet,
+                    "IMAGENET_STDDEV_RGB",
+                    K.constant(efficientnet.IMAGENET_STDDEV_RGB, dtype="float16"))
 
         var_x = self._get_encoder_model()(var_x)
 

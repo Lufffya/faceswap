@@ -580,7 +580,7 @@ class DisplayArea(ttk.Frame):  # pylint:disable=too-many-ancestors
                             cursor="hand2")
             lbl.pack(side=tk.TOP, fill=tk.X, padx=10, pady=(0, 5))
             bind = f"{key}|{link}"
-            lbl.bind("<Button-1>", lambda e, l=bind: self._link_callback(l))
+            lbl.bind("<Button-1>", lambda e, x=bind: self._link_callback(x))
 
         return frame
 
@@ -682,7 +682,7 @@ class DisplayArea(ttk.Frame):  # pylint:disable=too-many-ancestors
         logger.info("Saved config: '%s'", config.configfile)
 
         if category == "gui":
-            if not get_config().tk_vars["runningtask"].get():
+            if not get_config().tk_vars.running_task.get():
                 get_config().root.rebuild()
             else:
                 logger.info("Can't redraw GUI whilst a task is running. GUI Settings will be "

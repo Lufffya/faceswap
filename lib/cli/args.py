@@ -16,8 +16,8 @@ from lib.gpu_stats import GPUStats
 
 from plugins.plugin_loader import PluginLoader
 
-from .actions import (DirFullPaths, DirOrFileFullPaths, FileFullPaths, FilesFullPaths, MultiOption,
-                      Radio, SaveFileFullPaths, Slider)
+from .actions import (DirFullPaths, DirOrFileFullPaths, DirOrFilesFullPaths, FileFullPaths,
+                      FilesFullPaths, MultiOption, Radio, SaveFileFullPaths, Slider)
 from .launcher import ScriptExecutor
 
 logger = logging.getLogger(__name__)  # pylint: disable=invalid-name
@@ -371,12 +371,22 @@ class ExtractArgs(ExtractConvertArgs):
             The list of optional command line options for the Extract command
         """
         if get_backend() == "cpu":
-            default_detector = default_aligner = "cv2-dnn"
+            default_detector = "mtcnn"
+            default_aligner = "cv2-dnn"
         else:
             default_detector = "s3fd"
             default_aligner = "fan"
 
         argument_list: List[Dict[str, Any]] = []
+        argument_list.append(dict(
+            opts=("-b", "--batch-mode"),
+            action="store_true",
+            dest="batch_mode",
+            default=False,
+            group=_("Data"),
+            help=_("R|If selected then the input_dir should be a parent folder containing "
+                   "multiple videos and/or folders of images you wish to extract from. The faces "
+                   "will be output to separate sub-folders in the output_dir.")))
         argument_list.append(dict(
             opts=("-D", "--detector"),
             action=Radio,
@@ -476,6 +486,15 @@ class ExtractArgs(ExtractConvertArgs):
                    "times the face is re-fed into the aligner, the less micro-jitter should occur "
                    "but the longer extraction will take.")))
         argument_list.append(dict(
+            opts=("-a", "--re-align"),
+            action="store_true",
+            dest="re_align",
+            default=False,
+            group=_("Plugins"),
+            help=_("Re-feed the initially found aligned face through the aligner. Can help "
+                   "produce better alignments for faces that are rotated beyond 45 degrees in "
+                   "the frame or are at extreme angles. Slows down extraction.")))
+        argument_list.append(dict(
             opts=("-r", "--rotate-images"),
             type=str,
             dest="rotate_images",
@@ -485,6 +504,13 @@ class ExtractArgs(ExtractConvertArgs):
                    "more faces at the cost of extraction speed. Pass in a single number to use "
                    "increments of that size up to 360, or pass in a list of numbers to enumerate "
                    "exactly what angles to check.")))
+        argument_list.append(dict(
+            opts=("-I", "--identity"),
+            action="store_true",
+            default=False,
+            group=_("Plugins"),
+            help=_("Obtain and store face identity encodings from VGGFace2. Slows down extract a "
+                   "little, but will save time if using 'sort by face'")))
         argument_list.append(dict(
             opts=("-min", "--min-size"),
             action=Slider,
@@ -498,30 +524,28 @@ class ExtractArgs(ExtractConvertArgs):
                    "diagonal of the bounding box. Set to 0 for off")))
         argument_list.append(dict(
             opts=("-n", "--nfilter"),
-            action=FilesFullPaths,
+            action=DirOrFilesFullPaths,
             filetypes="image",
             dest="nfilter",
             default=None,
             nargs="+",
             group=_("Face Processing"),
-            help=_("Optionally filter out people who you do not wish to process by passing in an "
-                   "image of that person. Should be a front portrait with a single person in the "
-                   "image. Multiple images can be added space separated. NB: Using face filter "
-                   "will significantly decrease extraction speed and its accuracy cannot be "
-                   "guaranteed.")))
+            help=_("Optionally filter out people who you do not wish to extract by passing in "
+                   "images of those people. Should be a small variety of images at different "
+                   "angles and in different conditions. A folder containing the required images "
+                   "or multiple image files, space separated, can be selected.")))
         argument_list.append(dict(
             opts=("-f", "--filter"),
-            action=FilesFullPaths,
+            action=DirOrFilesFullPaths,
             filetypes="image",
             dest="filter",
             default=None,
             nargs="+",
             group=_("Face Processing"),
-            help=_("Optionally select people you wish to process by passing in an image of that "
-                   "person. Should be a front portrait with a single person in the image. "
-                   "Multiple images can be added space separated. NB: Using face filter will "
-                   "significantly decrease extraction speed and its accuracy cannot be "
-                   "guaranteed.")))
+            help=_("Optionally select people you wish to extract by passing in images of that "
+                   "person. Should be a small variety of images at different angles and in "
+                   "different conditions A folder containing the required images or multiple "
+                   "image files, space separated, can be selected.")))
         argument_list.append(dict(
             opts=("-l", "--ref_threshold"),
             action=Slider,
@@ -529,12 +553,10 @@ class ExtractArgs(ExtractConvertArgs):
             rounding=2,
             type=float,
             dest="ref_threshold",
-            default=0.4,
+            default=0.60,
             group=_("Face Processing"),
             help=_("For use with the optional nfilter/filter files. Threshold for positive face "
-                   "recognition. Lower values are stricter. NB: Using face filter will "
-                   "significantly decrease extraction speed and its accuracy cannot be "
-                   "guaranteed.")))
+                   "recognition. Higher values are stricter.")))
         argument_list.append(dict(
             opts=("-sz", "--size"),
             action=Slider,
@@ -584,10 +606,10 @@ class ExtractArgs(ExtractConvertArgs):
             opts=("-sp", "--singleprocess"),
             action="store_true",
             default=False,
-            backend="nvidia",
+            backend=("nvidia", "directml", "rocm", "apple_silicon"),
             group=_("settings"),
             help=_("Don't run extraction in parallel. Will run each part of the extraction "
-                   "process separately (one after the other) rather than all at the smae time. "
+                   "process separately (one after the other) rather than all at the same time. "
                    "Useful if VRAM is at a premium.")))
         argument_list.append(dict(
             opts=("-s", "--skip-existing"),
@@ -1021,21 +1043,13 @@ class TrainArgs(FaceSwapArgs):
                    "you want the model to stop automatically at a set number of iterations, you "
                    "can set that value here.")))
         argument_list.append(dict(
-            opts=("-d", "--distributed"),
-            action="store_true",
-            default=False,
-            backend="nvidia",
-            group=_("training"),
-            help=_("[Deprecated - Use '-D, --distribution-strategy' instead] Use the Tensorflow "
-                   "Mirrored Distrubution Strategy to train on multiple GPUs.")))
-        argument_list.append(dict(
             opts=("-D", "--distribution-strategy"),
             dest="distribution_strategy",
             action=Radio,
             type=str.lower,
             choices=["default", "central-storage", "mirrored"],
             default="default",
-            backend="nvidia",
+            backend=("nvidia", "directml", "rocm", "apple_silicon"),
             group=_("training"),
             help=_("R|Select the distribution stategy to use."
                    "\nL|default: Use Tensorflow's default distribution strategy."

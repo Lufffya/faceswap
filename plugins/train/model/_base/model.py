@@ -10,7 +10,7 @@ import sys
 import time
 
 from collections import OrderedDict
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING, Union
+from typing import cast, Dict, List, Optional, Tuple, TYPE_CHECKING, Union
 
 import numpy as np
 
@@ -129,6 +129,10 @@ class ModelBase():
                                 "Mask to use. Please select a mask or disable Penalized Mask "
                                 "Loss.")
 
+        if self.config["learn_mask"] and self.config["mask_type"] is None:
+            raise FaceswapError("'Learn Mask' has been selected but you have not chosen a Mask to "
+                                "use. Please select a mask or disable 'Learn Mask'.")
+
         self._mixed_precision = self.config["mixed_precision"] and get_backend() != "amd"
         # self._io = IO(self, model_dir, self._is_predict, self.config["save_optimizer"])
         # TODO - Re-enable saving of optimizer once this bug is fixed:
@@ -194,8 +198,9 @@ class ModelBase():
     @property
     def name(self) -> str:
         """ str: The name of this model based on the plugin name. """
-        basename = os.path.basename(sys.modules[self.__module__].__file__)
-        return os.path.splitext(basename)[0].lower()
+        _name = sys.modules[self.__module__].__file__
+        assert isinstance(_name, str)
+        return os.path.splitext(os.path.basename(_name))[0].lower()
 
     @property
     def model_name(self) -> str:
@@ -204,12 +209,18 @@ class ModelBase():
         return self.name
 
     @property
-    def output_shapes(self) -> List[List[Tuple]]:
-        """ list: A list of list of shape tuples for the outputs of the model with the batch
-        dimension removed. The outer list contains 2 sub-lists (one for each side "a" and "b").
-        The inner sub-lists contain the output shapes for that side. """
-        shapes = [tuple(K.int_shape(output)[-3:]) for output in self.model.outputs]
-        return [shapes[:len(shapes) // 2], shapes[len(shapes) // 2:]]
+    def input_shapes(self) -> List[Tuple[None, int, int, int]]:
+        """ list: A flattened list corresponding to all of the inputs to the model. """
+        shapes = [cast(Tuple[None, int, int, int], K.int_shape(inputs))
+                  for inputs in self.model.inputs]
+        return shapes
+
+    @property
+    def output_shapes(self) -> List[Tuple[None, int, int, int]]:
+        """ list: A flattened list corresponding to all of the outputs of the model. """
+        shapes = [cast(Tuple[None, int, int, int], K.int_shape(output))
+                  for output in self.model.outputs]
+        return shapes
 
     @property
     def iterations(self) -> int:
@@ -477,7 +488,7 @@ class ModelBase():
                      self.model.output_names, new_names)
         self.model.output_names = new_names
 
-    def _legacy_mapping(self) -> Optional[dict]:  # pylint:disable=no-self-use
+    def _legacy_mapping(self) -> Optional[dict]:
         """ The mapping of separate model files to single model layers for transferring of legacy
         weights.
 
