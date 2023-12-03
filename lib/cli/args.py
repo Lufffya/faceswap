@@ -8,8 +8,7 @@ import logging
 import re
 import sys
 import textwrap
-
-from typing import Any, Dict, List, NoReturn, Optional
+import typing as T
 
 from lib.utils import get_backend
 from lib.gpu_stats import GPUStats
@@ -30,7 +29,7 @@ _ = _LANG.gettext
 
 class FullHelpArgumentParser(argparse.ArgumentParser):
     """ Extends :class:`argparse.ArgumentParser` to output full help on bad arguments. """
-    def error(self, message: str) -> NoReturn:
+    def error(self, message: str) -> T.NoReturn:
         self.print_help(sys.stderr)
         self.exit(2, f"{self.prog}: error: {message}\n")
 
@@ -51,11 +50,11 @@ class SmartFormatter(argparse.HelpFormatter):
                  prog: str,
                  indent_increment: int = 2,
                  max_help_position: int = 24,
-                 width: Optional[int] = None) -> None:
+                 width: int | None = None) -> None:
         super().__init__(prog, indent_increment, max_help_position, width)
         self._whitespace_matcher_limited = re.compile(r'[ \r\f\v]+', re.ASCII)
 
-    def _split_lines(self, text: str, width: int) -> List[str]:
+    def _split_lines(self, text: str, width: int) -> list[str]:
         """ Split the given text by the given display width.
 
         If the text is not prefixed with "R|" then the standard
@@ -138,7 +137,7 @@ class FaceSwapArgs():
         return ""
 
     @staticmethod
-    def get_argument_list() -> List[Dict[str, Any]]:
+    def get_argument_list() -> list[dict[str, T.Any]]:
         """ Returns the argument list for the current command.
 
         The argument list should be a list of dictionaries pertaining to each option for a command.
@@ -152,11 +151,11 @@ class FaceSwapArgs():
         list
             The list of command line options for the given command
         """
-        argument_list: List[Dict[str, Any]] = []
+        argument_list: list[dict[str, T.Any]] = []
         return argument_list
 
     @staticmethod
-    def get_optional_arguments() -> List[Dict[str, Any]]:
+    def get_optional_arguments() -> list[dict[str, T.Any]]:
         """ Returns the optional argument list for the current command.
 
         The optional arguments list is not always required, but is used when there are shared
@@ -167,11 +166,11 @@ class FaceSwapArgs():
         list
             The list of optional command line options for the given command
         """
-        argument_list: List[Dict[str, Any]] = []
+        argument_list: list[dict[str, T.Any]] = []
         return argument_list
 
     @staticmethod
-    def _get_global_arguments() -> List[Dict[str, Any]]:
+    def _get_global_arguments() -> list[dict[str, T.Any]]:
         """ Returns the global Arguments list that are required for ALL commands in Faceswap.
 
         This method should NOT be overridden.
@@ -181,7 +180,7 @@ class FaceSwapArgs():
         list
             The list of global command line options for all Faceswap commands.
         """
-        global_args: List[Dict[str, Any]] = []
+        global_args: list[dict[str, T.Any]] = []
         if _GPUS:
             global_args.append(dict(
                 opts=("-X", "--exclude-gpus"),
@@ -302,7 +301,7 @@ class ExtractConvertArgs(FaceSwapArgs):
     """
 
     @staticmethod
-    def get_argument_list() -> List[Dict[str, Any]]:
+    def get_argument_list() -> list[dict[str, T.Any]]:
         """ Returns the argument list for shared Extract and Convert arguments.
 
         Returns
@@ -310,7 +309,7 @@ class ExtractConvertArgs(FaceSwapArgs):
         list
             The list of command line options for the given Extract and Convert
         """
-        argument_list: List[Dict[str, Any]] = []
+        argument_list: list[dict[str, T.Any]] = []
         argument_list.append(dict(
             opts=("-i", "--input-dir"),
             action=DirOrFileFullPaths,
@@ -362,7 +361,7 @@ class ExtractArgs(ExtractConvertArgs):
                  "Extraction plugins can be configured in the 'Settings' Menu")
 
     @staticmethod
-    def get_optional_arguments() -> List[Dict[str, Any]]:
+    def get_optional_arguments() -> list[dict[str, T.Any]]:
         """ Returns the argument list unique to the Extract command.
 
         Returns
@@ -377,7 +376,7 @@ class ExtractArgs(ExtractConvertArgs):
             default_detector = "s3fd"
             default_aligner = "fan"
 
-        argument_list: List[Dict[str, Any]] = []
+        argument_list: list[dict[str, T.Any]] = []
         argument_list.append(dict(
             opts=("-b", "--batch-mode"),
             action="store_true",
@@ -658,7 +657,7 @@ class ConvertArgs(ExtractConvertArgs):
                  "Conversion plugins can be configured in the 'Settings' Menu")
 
     @staticmethod
-    def get_optional_arguments() -> List[Dict[str, Any]]:
+    def get_optional_arguments() -> list[dict[str, T.Any]]:
         """ Returns the argument list unique to the Convert command.
 
         Returns
@@ -667,7 +666,7 @@ class ConvertArgs(ExtractConvertArgs):
             The list of optional command line options for the Convert command
         """
 
-        argument_list: List[Dict[str, Any]] = []
+        argument_list: list[dict[str, T.Any]] = []
         argument_list.append(dict(
             opts=("-ref", "--reference-video"),
             action=FileFullPaths,
@@ -768,6 +767,10 @@ class ConvertArgs(ExtractConvertArgs):
                    "\nL|gif: [animated image] Create an animated gif."
                    "\nL|opencv: [images] The fastest image writer, but less options and formats "
                    "than other plugins."
+                   "\nL|patch: [images] Outputs the raw swapped face patch, along with the "
+                   "transformation matrix required to re-insert the face back into the original "
+                   "frame. Use this option if you wish to post-process and composite the final "
+                   "face within external tools."
                    "\nL|pillow: [images] Slower than opencv, but has more options and supports "
                    "more formats.")))
         argument_list.append(dict(
@@ -790,6 +793,17 @@ class ConvertArgs(ExtractConvertArgs):
                    "--frame-ranges 10-50 90-100. Frames falling outside of the selected range "
                    "will be discarded unless '-k' (--keep-unchanged) is selected. NB: If you are "
                    "converting from images, then the filenames must end with the frame-number!")))
+        argument_list.append(dict(
+            opts=("-S", "--face-scale"),
+            action=Slider,
+            min_max=(-10.0, 10.0),
+            rounding=2,
+            dest="face_scale",
+            type=float,
+            default=0.0,
+            group=_("Face Processing"),
+            help=_("Scale the swapped face by this percentage. Positive values will enlarge the "
+                   "face, Negative values will shrink the face.")))
         argument_list.append(dict(
             opts=("-a", "--input-aligned-dir"),
             action=DirFullPaths,
@@ -915,7 +929,7 @@ class TrainArgs(FaceSwapArgs):
                  "Model plugins can be configured in the 'Settings' Menu")
 
     @staticmethod
-    def get_argument_list() -> List[Dict[str, Any]]:
+    def get_argument_list() -> list[dict[str, T.Any]]:
         """ Returns the argument list for Train arguments.
 
         Returns
@@ -923,7 +937,7 @@ class TrainArgs(FaceSwapArgs):
         list
             The list of command line options for training
         """
-        argument_list: List[Dict[str, Any]] = []
+        argument_list: list[dict[str, T.Any]] = []
         argument_list.append(dict(
             opts=("-A", "--input-A"),
             action=DirFullPaths,
@@ -1061,6 +1075,25 @@ class TrainArgs(FaceSwapArgs):
                    "GPUs. A copy of the model and all variables are loaded onto each GPU with "
                    "batches distributed to each GPU at each iteration.")))
         argument_list.append(dict(
+            opts=("-nl", "--no-logs"),
+            action="store_true",
+            dest="no_logs",
+            default=False,
+            group=_("training"),
+            help=_("Disables TensorBoard logging. NB: Disabling logs means that you will not be "
+                   "able to use the graph or analysis for this session in the GUI.")))
+        argument_list.append(dict(
+            opts=("-r", "--use-lr-finder"),
+            action="store_true",
+            dest="use_lr_finder",
+            default=False,
+            group=_("training"),
+            help=_("Use the Learning Rate Finder to discover the optimal learning rate for "
+                   "training. For new models, this will calculate the optimal learning rate for "
+                   "the model. For existing models this will use the optimal learning rate that "
+                   "was discovered when initializing the model. Setting this option will ignore "
+                   "the manually configured learning rate (configurable in train settings).")))
+        argument_list.append(dict(
             opts=("-s", "--save-interval"),
             action=Slider,
             min_max=(10, 1000),
@@ -1129,14 +1162,6 @@ class TrainArgs(FaceSwapArgs):
             help=_("Writes the training result to a file. The image will be stored in the root "
                    "of your FaceSwap folder.")))
         argument_list.append(dict(
-            opts=("-nl", "--no-logs"),
-            action="store_true",
-            dest="no_logs",
-            default=False,
-            group=_("training"),
-            help=_("Disables TensorBoard logging. NB: Disabling logs means that you will not be "
-                   "able to use the graph or analysis for this session in the GUI.")))
-        argument_list.append(dict(
             opts=("-wl", "--warp-to-landmarks"),
             action="store_true",
             dest="warp_to_landmarks",
@@ -1180,7 +1205,7 @@ class GuiArgs(FaceSwapArgs):
     """ Creates the command line arguments for the GUI. """
 
     @staticmethod
-    def get_argument_list() -> List[Dict[str, Any]]:
+    def get_argument_list() -> list[dict[str, T.Any]]:
         """ Returns the argument list for GUI arguments.
 
         Returns
@@ -1188,7 +1213,7 @@ class GuiArgs(FaceSwapArgs):
         list
             The list of command line options for the GUI
         """
-        argument_list: List[Dict[str, Any]] = []
+        argument_list: list[dict[str, T.Any]] = []
         argument_list.append(dict(
             opts=("-d", "--debug"),
             action="store_true",
